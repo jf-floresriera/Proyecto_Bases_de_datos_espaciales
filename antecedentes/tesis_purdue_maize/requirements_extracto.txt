@@ -1,0 +1,6 @@
+# Extracto de purdue_maize_api/requirements.txt en el commit a0dcd30
+
+# Advanced analytics and columnar data processing
+duckdb>=1.0.0,<2.0.0
+pyarrow>=17.0.0,<18.0.0
+geopandas>=1.0.0,<2.0.0
