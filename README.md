@@ -56,7 +56,3 @@ quarto render proyectos/tema_01_duckdb_geoparquet/01_informe_duckdb_geoparquet.q
 El patrón PostGIS (OLTP) + DuckDB (OLAP) con exportación a GeoParquet se implementó primero en la tesis de maestría del autor (repositorio privado `jf-floresriera/purdue-maize`), en los commits `c45ae22` y `a0dcd30` del **7 de octubre de 2026**. Esos archivos se importaron a `antecedentes/tesis_purdue_maize/` conservando la **fecha de autoría original**; la fecha de *commit* de la importación es la del momento en que se trasladaron a este repositorio (ambas son visibles con `git log --format='%h %ad %cd %s'`). El resto de la tesis no forma parte de este proyecto.
 
 Desde ese antecedente, este repositorio desarrolla el componente experimental que pide el curso: el benchmark comparativo, el taller y el informe.
-
-## Uso de asistentes de IA
-
-Ver la sección correspondiente del informe. Las cifras de rendimiento se obtienen únicamente ejecutando los scripts.

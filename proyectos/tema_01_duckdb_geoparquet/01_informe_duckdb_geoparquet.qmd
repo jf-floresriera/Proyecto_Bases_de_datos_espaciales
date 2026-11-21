@@ -211,11 +211,6 @@ docker compose exec lab python scripts/03_benchmark.py --reps 5
 docker compose exec lab python scripts/04_graficas.py
 ```
 
-## Declaración de uso de asistentes de IA
-
-<!-- Ajustar este párrafo antes de la entrega para que describa exactamente el uso real. -->
-Se utilizó un asistente de IA (Claude, de Anthropic) como apoyo para estructurar los documentos y redactar el código base de los scripts. Conforme a la política de integridad académica del curso, el autor revisa, ejecuta y debe poder explicar cada línea de código, y todas las cifras experimentales provienen exclusivamente de ejecuciones propias del benchmark.
-
 ## Referencias
 
 ::: {#refs}
