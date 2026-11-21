@@ -99,6 +99,7 @@ En DuckDB no existe servidor: la biblioteca se enlaza dentro del proceso de Pyth
 
 :::: {.columns}
 ::: {.column width="55%"}
+
 * **In-process**: una biblioteca, sin servidor ni administración.
 * **Columnar y vectorizado**: los operadores procesan vectores de valores, no tuplas sueltas.
 * **Paralelismo** automático sobre todos los núcleos.
@@ -106,6 +107,7 @@ En DuckDB no existe servidor: la biblioteca se enlaza dentro del proceso de Pyth
 * **SQL completo** y lectura directa de CSV, JSON, Parquet, Excel y bases PostgreSQL (`ATTACH ... (TYPE postgres)`).
 :::
 ::: {.column width="45%"}
+
 * **Extensiones**: `spatial` (funciones `ST_*`, GDAL), `httpfs` (HTTP y S3), `postgres`.
 * Desborde a disco (*spilling*) cuando se supera `memory_limit`.
 * Clientes: Python, R, Julia, Java, CLI, navegador (WASM).
@@ -219,6 +221,7 @@ El código original está en antecedentes/tesis_purdue_maize, importado con su f
 
 :::: {.columns}
 ::: {.column width="50%"}
+
 **DuckDB + GeoParquet conviene cuando**
 
 * las consultas agregan o filtran millones de registros y leen pocas columnas;
@@ -228,6 +231,7 @@ El código original está en antecedentes/tesis_purdue_maize, importado con su f
 * se distribuyen datos a muchos usuarios.
 :::
 ::: {.column width="50%"}
+
 **PostGIS sigue siendo mejor cuando**
 
 * hay muchos escritores concurrentes y edición multiusuario;
