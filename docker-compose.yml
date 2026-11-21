@@ -9,6 +9,10 @@
 services:
   db-postgis:
     image: postgis/postgis:17-3.5
+    # La imagen oficial de PostGIS solo se publica para amd64. En macOS con
+    # Apple Silicon (M1-M4) Docker Desktop la ejecuta emulada (Rosetta); en
+    # Linux y Windows x86_64 esta línea no cambia nada.
+    platform: ${PG_PLATFORM:-linux/amd64}
     container_name: bde_t01_postgis
     restart: unless-stopped
     environment:
