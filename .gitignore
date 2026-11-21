@@ -1,0 +1,17 @@
+.env
+__pycache__/
+*.pyc
+
+# Datos descargados o generados (se reconstruyen con los scripts)
+datos/*.parquet
+datos/*.duckdb
+datos/*.duckdb.wal
+datos/tmp/
+
+# Salidas de Quarto
+_site/
+_freeze/
+*_files/
+*.html
+!assets/*.html
+.quarto/
