@@ -52,7 +52,7 @@ GeoParquet 1.0 (2023) define que las geometrías se codifican en WKB dentro de c
 Dada una ventana de consulta $W = [x_0, x_1] \times [y_0, y_1]$ y $G$ grupos de filas con estadísticas $[x_g^{\min}, x_g^{\max}]$ y $[y_g^{\min}, y_g^{\max}]$ sobre la columna `bbox`, la fracción de grupos que el lector debe descomprimir es
 
 $$
-\rho(W) = \frac{1}{G} \sum_{g=1}^{G} \mathbb{1}\left[\, x_g^{\min} \le x_1 \,\wedge\, x_g^{\max} \ge x_0 \,\wedge\, y_g^{\min} \le y_1 \,\wedge\, y_g^{\max} \ge y_0 \,\right]
+\rho(W) = \frac{1}{G} \sum_{g=1}^{G} \mathbf{1}\left[\, x_g^{\min} \le x_1 \,\wedge\, x_g^{\max} \ge x_0 \,\wedge\, y_g^{\min} \le y_1 \,\wedge\, y_g^{\max} \ge y_0 \,\right]
 $$ {#eq-fraccion-grupos}
 
 Si los registros están en orden aleatorio, cada grupo cubre casi toda el área de estudio y $\rho(W) \to 1$ para cualquier ventana: el empuje no descarta nada. Si se ordenan por una curva de llenado del espacio (Hilbert), los grupos cubren regiones compactas y $\rho(W)$ se aproxima a la fracción del área cubierta por $W$. La @eq-fraccion-grupos motiva el control experimental con archivo ordenado y desordenado.

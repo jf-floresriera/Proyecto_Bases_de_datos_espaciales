@@ -22,6 +22,10 @@ from sqlalchemy import create_engine
 from comun import EDIFICIOS, GRILLA, conectar_duckdb, pg_dsn, pg_url
 
 DDL_POST_CARGA = [
+    # GeoAlchemy2 crea por defecto un índice espacial idx_<tabla>_geom; se
+    # elimina para que cada tabla tenga un único GiST con nombre controlado.
+    "DROP INDEX IF EXISTS t01.idx_edificios_geom",
+    "DROP INDEX IF EXISTS t01.idx_grilla_geom",
     "ALTER TABLE t01.edificios ADD PRIMARY KEY (id)",
     "ALTER TABLE t01.grilla ADD PRIMARY KEY (celda_id)",
     "CREATE INDEX IF NOT EXISTS edificios_geom_gist ON t01.edificios USING GIST (geom)",
