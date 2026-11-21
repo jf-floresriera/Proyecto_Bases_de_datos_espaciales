@@ -1,0 +1,325 @@
+---
+title: "DuckDB espacial y GeoParquet"
+subtitle: "Procesamiento analítico columnar y formatos nativos de nube · Tema 01"
+author: "Jesús Enrique Flores Riera"
+institute: "Bases de datos espaciales · Universidad Nacional de Colombia · 2026-2"
+lang: es
+format:
+  revealjs:
+    slide-number: true
+    toc: false
+    incremental: false
+    smaller: false
+    scrollable: true
+    transition: fade
+    footer: "Tema 01 · DuckDB espacial y GeoParquet"
+bibliography: references.bib
+---
+
+## Hoja de ruta (30 minutos)
+
+1. Historia: de los almacenes columnares a DuckDB y GeoParquet
+2. Importancia: el cuello de botella del SGBD monolítico
+3. Características técnicas de DuckDB y de GeoParquet
+4. Aplicaciones en la industria y caso propio
+5. Cuándo implementarlo y cuándo no
+6. Limitaciones
+7. Diseño experimental y puente hacia el taller
+
+::: {.notes}
+Presentar el objetivo: entender por qué un motor columnar embebido y un formato de archivo columnar pueden responder consultas analíticas espaciales más rápido que un servidor relacional indexado, y en qué casos no.
+:::
+
+# Historia {background-color="#0072B2"}
+
+## Raíces académicas: almacenes columnares y ejecución vectorizada
+
+* **2005, C-Store**: almacenar por columnas en lugar de por filas reduce la E/S en consultas que leen pocas columnas de muchas filas [@stonebraker2005cstore].
+* **2005, MonetDB/X100 (CWI, Ámsterdam)**: ejecución *vectorizada*, operadores que procesan lotes de valores para aprovechar la caché de la CPU [@boncz2005x100].
+* **2010, Dremel (Google)**: almacenamiento columnar de datos anidados, base conceptual de Apache Parquet [@melnik2010dremel].
+* **2013, Apache Parquet**: formato abierto columnar que se vuelve el estándar de los lagos de datos.
+* **2017**: Raasveldt y Mühleisen miden que transferir resultados por el protocolo cliente-servidor puede dominar el tiempo total de un análisis [@raasveldt2017hostage].
+
+::: {.notes}
+El hilo conductor: el mismo grupo de investigación del CWI (Database Architectures) que creó MonetDB es el que crea DuckDB. DuckDB es la conclusión práctica del artículo de 2017: si el cuello de botella es el socket, se elimina el socket.
+:::
+
+## Línea de tiempo de DuckDB y GeoParquet
+
+| Año | Hito |
+|:-|:--------|
+| 2018 | Mark Raasveldt y Hannes Mühleisen inician DuckDB en el CWI |
+| 2019 | DuckDB v0.1 en SIGMOD, Ámsterdam [@raasveldt2019duckdb] |
+| 2021 | Se funda DuckDB Labs como *spin-off* del CWI |
+| 2023 | Extensión `spatial` (abril) [@duckdb2023spatial]; GeoParquet 1.0.0 (septiembre) [@geoparquet2023v100] |
+| 2024 | DuckDB 1.0.0 (3 de junio); GeoParquet 1.1.0 con columna `bbox` de cobertura [@geoparquet2024v110] |
+| 2025 | Parquet e Iceberg adoptan tipos nativos `GEOMETRY`/`GEOGRAPHY` [@cng2025geoparquet2]; DuckDB 1.4 LTS [@duckdb2025v140] |
+| 2026 | DuckDB 1.5: `GEOMETRY` pasa a ser tipo del núcleo [@duckdb2026v150]; DuckDB 2.0.0 LTS (21 de octubre) [@duckdb2026v200] |
+
+: Hitos principales {#tbl-hitos}
+
+::: {.notes}
+Fuente de fechas: página de historia de DuckDB, anuncios oficiales de versión y repositorio de la especificación GeoParquet. DuckDB 2.0 es muy reciente: el propio equipo recomienda esperar la 2.0.1 para producción; por eso el entorno del curso fija la línea 1.5.
+:::
+
+# Importancia {background-color="#0072B2"}
+
+## El cuello de botella del SGBD monolítico
+
+* PostgreSQL/PostGIS es un motor **OLTP orientado a filas**: excelente para transacciones concurrentes, integridad referencial y edición multiusuario.
+* En consultas **analíticas** (agregar millones de filas, leer pocas columnas) paga costos que no aportan:
+  * lee la tupla completa aunque la consulta use dos columnas;
+  * procesa tupla a tupla (modelo iterador de Volcano);
+  * todo resultado viaja por **socket TCP**, con llamadas al sistema y serialización binaria.
+* La pregunta del tema: ¿a partir de qué volumen el formato columnar y el empuje de predicados superan a un escaneo indexado con GiST?
+
+## Cliente-servidor frente a *in-process*
+
+```{mermaid}
+%%| label: fig-arquitecturas
+%%| fig-cap: "Ruta de los datos en PostGIS (arriba) y en DuckDB sobre GeoParquet (abajo)"
+flowchart LR
+  subgraph CS[Cliente-servidor: PostgreSQL/PostGIS]
+    A[Script Python] -- SQL por TCP --> B[Proceso servidor]
+    B --> C[(Tablas heap + índice GiST)]
+    B -- filas serializadas por TCP --> A
+  end
+  subgraph IP[In-process: DuckDB]
+    D[Script Python + DuckDB en el mismo proceso] --> E[(Archivos GeoParquet local o S3)]
+  end
+```
+
+::: {.notes}
+En DuckDB no existe servidor: la biblioteca se enlaza dentro del proceso de Python, R o el navegador (WASM). El resultado se entrega como estructura en memoria (Arrow, pandas) sin pasar por la red.
+:::
+
+# Características {background-color="#0072B2"}
+
+## DuckDB: motor OLAP embebido
+
+:::: {.columns}
+::: {.column width="55%"}
+* **In-process**: una biblioteca, sin servidor ni administración.
+* **Columnar y vectorizado**: los operadores procesan vectores de valores, no tuplas sueltas.
+* **Paralelismo** automático sobre todos los núcleos.
+* **Transacciones ACID** con MVCC.
+* **SQL completo** y lectura directa de CSV, JSON, Parquet, Excel y bases PostgreSQL (`ATTACH ... (TYPE postgres)`).
+:::
+::: {.column width="45%"}
+* **Extensiones**: `spatial` (funciones `ST_*`, GDAL), `httpfs` (HTTP y S3), `postgres`.
+* Desborde a disco (*spilling*) cuando se supera `memory_limit`.
+* Clientes: Python, R, Julia, Java, CLI, navegador (WASM).
+:::
+::::
+
+## Anatomía de un archivo Parquet
+
+```{mermaid}
+%%| label: fig-parquet
+%%| fig-cap: "Un archivo Parquet se divide en grupos de filas; cada columna se guarda contigua y el pie guarda estadísticas min/max"
+flowchart TB
+  F[Archivo .parquet] --> RG1[Grupo de filas 1]
+  F --> RG2[Grupo de filas 2]
+  F --> RGn[Grupo de filas n]
+  F --> FT[Pie: esquema + estadísticas min/max por columna y grupo + metadatos 'geo']
+  RG1 --> C1[Columna id]
+  RG1 --> C2[Columna clase]
+  RG1 --> C3[Columna geom WKB]
+  RG1 --> C4[Columna bbox.xmin ... bbox.ymax]
+```
+
+* Compresión por columna (ZSTD, Snappy) y codificación por diccionario.
+* El lector puede **leer solo las columnas pedidas** y **saltar grupos de filas** completos.
+
+## GeoParquet: geometría dentro de Parquet
+
+* **1.0 (2023)**: geometrías en WKB dentro de columnas `BYTE_ARRAY`, más una clave de metadatos `geo` con versión, columna primaria, SRC (`crs`), tipos de geometría y extensión.
+* **1.1 (2024)**: columna de **cobertura `bbox`** (`xmin`, `ymin`, `xmax`, `ymax`) cuyas estadísticas permiten el filtrado espacial por grupo de filas; codificación GeoArrow opcional.
+* **2.0 / tipos nativos (2025-2026)**: `GEOMETRY` y `GEOGRAPHY` como tipos lógicos de Parquet, con estadísticas espaciales integradas [@parquet2026geotypes].
+* Recomendación vigente de la comunidad: mantener 1.1 en producción mientras el ecosistema adopta los tipos nativos [@cng2025geoparquet2].
+
+## Empuje de predicados (*predicate pushdown*)
+
+```sql
+SELECT count(*)
+FROM read_parquet('edificios.parquet')
+WHERE bbox.xmin <= -74.05 AND bbox.xmax >= -74.11   -- se evalúa contra min/max del pie
+  AND bbox.ymin <=   4.68 AND bbox.ymax >=   4.62
+  AND ST_Intersects(geom, ST_MakeEnvelope(-74.11, 4.62, -74.05, 4.68));
+```
+
+* Si el rango `[min, max]` de `bbox.xmin` de un grupo de filas no cumple el filtro, **el grupo no se lee**.
+* Funciona solo si los datos están **ordenados espacialmente** (curva de Hilbert): sin orden, cada grupo cubre toda la ciudad y nada se descarta.
+* Sobre S3 esto significa descargar unos pocos MB en lugar del archivo completo.
+
+::: {.notes}
+Este es el punto central del experimento E1: se mide la misma consulta con filtro bbox y sin él, y sobre un archivo ordenado y otro desordenado. El archivo desordenado demuestra que el formato por sí solo no basta: la organización física de los datos importa tanto como en un índice.
+:::
+
+## DuckDB `spatial`
+
+* Tipo `GEOMETRY` (modelo *Simple Features* OGC) y tipos nativos experimentales `POINT_2D`, `BOX_2D`, etc.
+* Funciones `ST_*` al estilo PostGIS: `ST_Intersects`, `ST_Area`, `ST_Transform`, `ST_Hilbert`...
+* `ST_Read` lee cualquier formato de GDAL (Shapefile, GeoPackage, GeoJSON).
+* **Índice R-tree** (`CREATE INDEX ... USING RTREE`) desde 1.1, para tablas persistidas [@duckdbrtree].
+* **Cruce espacial optimizado**: desde 1.3 el operador `SPATIAL_JOIN` construye un R-tree temporal en memoria [@willison2025spatialjoins].
+
+## PostGIS frente a DuckDB en una tabla
+
+| Dimensión | PostgreSQL/PostGIS | DuckDB + GeoParquet |
+|:-|:---|:---|
+| Carga de trabajo | OLTP y mixta | OLAP |
+| Almacenamiento | Filas (*heap*) + TOAST | Columnas comprimidas |
+| Acceso | Servidor TCP, multiusuario | Biblioteca en el proceso |
+| Índice espacial | GiST (R-tree), SP-GiST, BRIN | R-tree en tablas; estadísticas min/max en Parquet |
+| Escritura concurrente | Muchos clientes | Un proceso escritor |
+| Datos en la nube | Requiere ingestión previa | Lectura directa por HTTP/S3 |
+| Madurez espacial | Más de 20 años, topología, ráster | Reciente, en evolución rápida |
+
+: Comparación arquitectónica {#tbl-comparacion}
+
+# Aplicaciones en la industria {background-color="#0072B2"}
+
+## Distribución de datos abiertos a escala planetaria
+
+* **Overture Maps Foundation** (Amazon, Meta, Microsoft, TomTom, entre otros) publica edificaciones, vías, lugares y límites en **GeoParquet sobre S3**.
+* Su documentación oficial usa DuckDB para consultar archivos remotos y descargar solo el subconjunto necesario [@overturedocsduckdb].
+* Mismo patrón en Source Cooperative, Google Open Buildings y las colecciones STAC en GeoParquet de Planetary Computer.
+
+## Ecosistema y casos de uso
+
+* **Ingeniería de datos**: transformar Shapefile/GeoJSON a GeoParquet en *pipelines* ETL; GDAL lee y escribe GeoParquet desde la versión 3.8.
+* **Ciencia de datos**: análisis exploratorio en Python/R sin montar un servidor; GeoPandas lee y escribe GeoParquet.
+* **SIG en el navegador**: DuckDB-WASM ejecuta SQL espacial en el cliente; **GeoLibre** lo usa para abrir GeoParquet y PMTiles sin servidor dedicado [@wu2026geolibre].
+* **Lagos de datos**: Apache Sedona, Iceberg y plataformas como CARTO consumen el mismo formato.
+
+## Caso propio: plataforma de monitoreo de enfermedades del maíz
+
+```{mermaid}
+%%| label: fig-caso-tesis
+%%| fig-cap: "Patrón OLTP + OLAP implementado en la tesis de maestría (commit c45ae22, 7 de octubre de 2026)"
+flowchart LR
+  APP[App móvil Flutter] -->|captura en campo| API[API FastAPI]
+  API --> PG[(PostGIS: lotes, observaciones, estadísticas zonales)]
+  API -->|exportación analítica| DDB[DuckDB en memoria]
+  DDB -->|ATTACH TYPE postgres| PG
+  DDB -->|COPY FORMAT PARQUET| GP[[Series en GeoParquet]]
+```
+
+* PostGIS conserva la integridad transaccional; DuckDB resuelve el cruce analítico y la exportación columnar sin cargar la base OLTP.
+* Lecciones aprendidas, que se corrigen en este proyecto: consultas armadas con *f-strings* (riesgo de inyección SQL) y verificar que el archivo lleve los metadatos `geo`.
+
+::: {.notes}
+El código original está en antecedentes/tesis_purdue_maize, importado con su fecha real de autoría. Aquí es donde se conecta la experiencia previa con el tema del curso.
+:::
+
+# ¿Para qué y cuándo implementarlo? {background-color="#0072B2"}
+
+## Criterios de decisión
+
+:::: {.columns}
+::: {.column width="50%"}
+**DuckDB + GeoParquet conviene cuando**
+
+* las consultas agregan o filtran millones de registros y leen pocas columnas;
+* los datos son de solo lectura o se reescriben por lotes;
+* los datos ya viven en un almacenamiento de objetos (S3, GCS, HTTP);
+* se necesita reproducibilidad sin infraestructura (un archivo + un script);
+* se distribuyen datos a muchos usuarios.
+:::
+::: {.column width="50%"}
+**PostGIS sigue siendo mejor cuando**
+
+* hay muchos escritores concurrentes y edición multiusuario;
+* se requieren restricciones de integridad, disparadores y permisos finos;
+* hay consultas puntuales muy selectivas y frecuentes (índice GiST caliente);
+* se usa topología persistente, pgRouting o ráster en base de datos;
+* clientes SIG se conectan en vivo (QGIS, ArcGIS Pro).
+:::
+::::
+
+**Arquitectura recomendada**: complementarios, no sustitutos. PostGIS como sistema de registro y DuckDB/GeoParquet como capa analítica y de distribución.
+
+# Limitaciones {background-color="#0072B2"}
+
+## Limitaciones técnicas
+
+* **Concurrencia**: un solo proceso puede escribir el archivo nativo; varios procesos solo en modo lectura [@duckdbconcurrency].
+* **R-tree**: solo acelera filtros `WHERE` con un argumento constante conocido al planificar; sus búferes no se descargan de memoria mientras exista el índice [@duckdbrtree].
+* **GeoParquet no tiene índice interno**: el filtrado depende del orden espacial y del tamaño de los grupos de filas.
+* **Memoria**: con geometrías complejas, superar `memory_limit` obliga a desbordar a disco o produce errores de memoria (pregunta 2 del tema).
+* **Ecosistema en transición**: GeoParquet 1.1 frente a tipos nativos 2.0; no todas las herramientas leen ambos.
+* **Madurez**: DuckDB 2.0 cambia el formato de archivo; la extensión `spatial` cubre menos funciones que PostGIS (sin topología persistente ni ráster).
+
+# Diseño experimental {background-color="#0072B2"}
+
+## Preguntas orientadoras e hipótesis
+
+1. ¿En qué magnitud reducen el formato columnar y el empuje de predicados los tiempos de filtrado espacial frente a un escaneo indexado en PostGIS?
+2. ¿Cuál es el límite de volumen de geometrías complejas que DuckDB puede procesar en memoria antes de degradarse por paginación en disco?
+
+**Hipótesis**
+
+* H1: con ventanas pequeñas (1 %), GiST compite o gana; con ventanas grandes (50 %) y agregaciones, DuckDB gana por lectura columnar y paralelismo.
+* H2: el filtro `bbox` solo aporta si el archivo está ordenado espacialmente.
+* H3: al reducir `memory_limit` por debajo del conjunto de trabajo del cruce espacial, la latencia crece por desborde a disco hasta fallar.
+
+## Datos y entorno
+
+* **Datos abiertos**: huellas de edificaciones de Overture Maps para Bogotá D. C. (consulta directa a S3) y grilla de celdas de ~500 m.
+* **Control sintético**: polígonos aleatorios con semilla fija (1, 5 y 10 millones) para el barrido de volumen y aulas sin red.
+* **Entorno**: Docker Compose con `postgis/postgis:17-3.5` y laboratorio Python 3.12 + DuckDB 1.5.6; ambos contenedores con la misma CPU y RAM.
+* **Mismos registros** en ambos motores, cargados vía WKB y verificados por conteo.
+
+## Experimentos y métricas
+
+| Experimento | Consulta | Variantes |
+|:-|:---|:---|
+| E0 | `SELECT 1` | línea base del proceso DuckDB |
+| E1 | Filtro por ventana 1 %, 10 %, 50 % | GiST, secuencial, DuckDB con/sin `bbox`, archivo desordenado |
+| E2 | Conteo y altura media por clase | PostGIS frente a DuckDB |
+| E3 | Cruce edificios x grilla | GiST frente a DuckDB con `memory_limit` 256 MB a 2 GB |
+
+: Matriz experimental {#tbl-experimentos}
+
+* **Métricas**: latencia de extremo a extremo, CPU, pico de RSS, bytes leídos (`/proc/self/io`), `EXPLAIN (ANALYZE, BUFFERS)` y `docker stats`.
+* **Método**: 1 calentamiento + 5 repeticiones, mediana e IQR; verificación de que ambos motores devuelven el mismo resultado.
+
+## Resultados
+
+::: {.callout-important}
+Esta diapositiva se completa con `resultados/resumen.csv` y las figuras de `resultados/figuras/` después de ejecutar el benchmark. No se reportan cifras que no hayan sido medidas.
+:::
+
+<!-- Descomentar tras ejecutar scripts/04_graficas.py
+![Filtro por ventana](../../resultados/figuras/e1_ventanas.png){#fig-e1}
+-->
+
+# Ejercicio práctico {background-color="#D55E00"}
+
+## Taller guiado: 60 minutos
+
+| Minutos | Paso |
+|:-:|:---|
+| 0-10 | Levantar el entorno y verificar contenedores |
+| 10-20 | Primer contacto: DuckDB lee GeoParquet remoto de Overture |
+| 20-30 | Anatomía del archivo: grupos de filas, estadísticas, metadatos `geo` |
+| 30-40 | El mismo filtro en PostGIS con `EXPLAIN (ANALYZE, BUFFERS)` |
+| 40-50 | Empuje de predicados: con/sin `bbox`, ordenado/desordenado |
+| 50-60 | Cruce espacial, `memory_limit` y exportación a GeoParquet |
+
+: Agenda del taller {#tbl-taller}
+
+Guía completa: `01_taller_duckdb_geoparquet.qmd`.
+
+## Preguntas para el debate (15 minutos)
+
+* ¿Qué parte de la ganancia se debe al formato columnar y qué parte a eliminar el socket?
+* ¿Es justa la comparación si PostGIS tiene la caché caliente y DuckDB lee de disco?
+* ¿Qué pasaría con estos resultados si los datos se editaran todos los días?
+* ¿Cómo se integraría GeoParquet en la geodatabase corporativa de una entidad pública?
+
+## Referencias
+
+::: {#refs}
+:::
