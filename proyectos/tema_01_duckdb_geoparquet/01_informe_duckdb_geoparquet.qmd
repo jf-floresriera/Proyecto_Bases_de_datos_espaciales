@@ -1,0 +1,222 @@
+---
+title: "Procesamiento analítico columnar y formatos nativos de nube: DuckDB espacial y GeoParquet frente a PostgreSQL/PostGIS"
+author: "Jesús Enrique Flores Riera"
+lang: es
+engine: knitr
+execute:
+  eval: false
+  echo: true
+bibliography: references.bib
+---
+
+# DuckDB espacial y GeoParquet {#sec-tema01-duckdb-geoparquet}
+
+## Resumen
+
+Este capítulo evalúa experimentalmente cuándo un motor analítico columnar embebido (DuckDB con su extensión `spatial`) que consulta archivos GeoParquet supera a un sistema gestor de bases de datos espaciales relacional orientado a filas (PostgreSQL/PostGIS con índices GiST) en consultas analíticas vectoriales. Se comparan latencia, tiempo de CPU, memoria residente y lecturas de E/S en tres familias de consultas (filtro por ventana, agregación y cruce espacial) sobre las huellas de edificaciones de Overture Maps para Bogotá D. C. y sobre conjuntos sintéticos de volumen controlado. Ambos motores se ejecutan en contenedores Docker con el mismo presupuesto de CPU y RAM, y cada resultado se verifica para garantizar que los dos motores responden lo mismo.
+
+::: {.callout-warning}
+## Estado del documento
+
+Las secciones de resultados, discusión y conclusiones se completan con los valores de `resultados/resumen.csv` generados por `scripts/03_benchmark.py` y `scripts/04_graficas.py`. Ninguna cifra de rendimiento de este capítulo debe escribirse sin haber sido medida.
+:::
+
+## Introducción y justificación
+
+Los motores relacionales espaciales como PostgreSQL/PostGIS se diseñaron para cargas transaccionales (OLTP): muchas operaciones pequeñas y concurrentes de lectura y escritura con garantías ACID, integridad referencial y control de acceso multiusuario. Las cargas analíticas (OLAP) tienen otro perfil: pocas consultas que recorren millones de registros, leen un subconjunto reducido de columnas y producen agregados.
+
+En ese escenario, un motor orientado a filas paga tres costos que no aportan a la respuesta:
+
+1. **Lectura de tuplas completas**: cada página del *heap* contiene todas las columnas de una fila, aunque la consulta use dos.
+2. **Ejecución tupla a tupla**: el modelo iterador procesa un registro por llamada, con poca reutilización de la caché de la CPU.
+3. **Transferencia cliente-servidor**: todo resultado atraviesa un socket TCP, con llamadas al sistema y serialización binaria; Raasveldt y Mühleisen mostraron que este costo puede dominar el tiempo total de un flujo analítico [@raasveldt2017hostage].
+
+DuckDB responde a los tres: almacena y procesa por columnas, ejecuta operadores vectorizados heredados de la línea de investigación de MonetDB/X100 [@boncz2005x100] y se ejecuta dentro del proceso del cliente, sin socket [@raasveldt2019duckdb]. GeoParquet, por su parte, estandariza cómo guardar geometrías dentro de Apache Parquet, el formato columnar abierto de los lagos de datos, de modo que el mismo archivo pueda consultarse en disco local o en almacenamiento de objetos sin ingestión previa [@geoparquet2024v110].
+
+## Marco teórico
+
+### Almacenamiento por filas y por columnas
+
+Sea una relación con $n$ tuplas y $c$ columnas de ancho medio $w$ bytes. Una consulta que proyecta $k \ll c$ columnas obliga a un almacén por filas a leer del orden de $n \cdot c \cdot w$ bytes, mientras que un almacén por columnas lee del orden de $n \cdot k \cdot w$ bytes, antes de compresión [@stonebraker2005cstore]. La compresión por columna (diccionarios, codificación por longitud de corridas, ZSTD) es además más efectiva porque los valores de una misma columna son homogéneos.
+
+### Formato Apache Parquet
+
+Parquet, inspirado en el modelo de almacenamiento de Dremel [@melnik2010dremel], divide un archivo en **grupos de filas** (*row groups*); dentro de cada grupo, cada columna se guarda como un fragmento contiguo y comprimido. El pie del archivo registra el esquema y, por cada grupo y columna, estadísticas mínimas y máximas.
+
+### GeoParquet
+
+GeoParquet 1.0 (2023) define que las geometrías se codifican en WKB dentro de columnas `BYTE_ARRAY` y que una clave de metadatos `geo` declara la versión, la columna geométrica primaria, la codificación, el sistema de referencia y los tipos de geometría [@geoparquet2023v100]. La versión 1.1 añade la **columna de cobertura `bbox`** (estructura con `xmin`, `ymin`, `xmax`, `ymax`) cuyas estadísticas por grupo de filas habilitan el filtrado espacial sin decodificar geometrías [@geoparquet2024v110]. Desde 2025, Parquet e Iceberg incorporan `GEOMETRY` y `GEOGRAPHY` como tipos lógicos nativos (la dirección llamada GeoParquet 2.0), aunque la comunidad recomienda mantener 1.1 en producción mientras el ecosistema madura [@cng2025geoparquet2; @parquet2026geotypes].
+
+### Empuje de predicados y fracción de grupos leídos
+
+Dada una ventana de consulta $W = [x_0, x_1] \times [y_0, y_1]$ y $G$ grupos de filas con estadísticas $[\underline{x}_g, \overline{x}_g]$ y $[\underline{y}_g, \overline{y}_g]$ sobre la columna `bbox`, la fracción de grupos que el lector debe descomprimir es
+
+$$
+\rho(W) = \frac{1}{G} \sum_{g=1}^{G} \mathbb{1}\left[\, \underline{x}_g \le x_1 \,\wedge\, \overline{x}_g \ge x_0 \,\wedge\, \underline{y}_g \le y_1 \,\wedge\, \overline{y}_g \ge y_0 \,\right]
+$$ {#eq-fraccion-grupos}
+
+Si los registros están en orden aleatorio, cada grupo cubre casi toda el área de estudio y $\rho(W) \to 1$ para cualquier ventana: el empuje no descarta nada. Si se ordenan por una curva de llenado del espacio (Hilbert), los grupos cubren regiones compactas y $\rho(W)$ se aproxima a la fracción del área cubierta por $W$. La @eq-fraccion-grupos motiva el control experimental con archivo ordenado y desordenado.
+
+### Índices espaciales
+
+PostGIS indexa geometrías con GiST [@hellerstein1995gist], que implementa un árbol R [@guttman1984rtrees] sobre cajas envolventes mínimas; el operador `&&` filtra por caja y `ST_Intersects` refina con la geometría exacta. DuckDB ofrece índices R-tree sobre tablas persistidas desde la versión 1.1, con la restricción de que solo aceleran filtros `WHERE` cuyo segundo argumento es constante en tiempo de planificación [@duckdbrtree], y desde la versión 1.3 un operador `SPATIAL_JOIN` que construye un R-tree temporal en memoria para cruces espaciales [@willison2025spatialjoins]. Sobre archivos GeoParquet, en cambio, el único mecanismo de poda es la @eq-fraccion-grupos.
+
+## Preguntas orientadoras e hipótesis
+
+1. ¿En qué magnitud reducen el formato columnar y el empuje de predicados los tiempos de filtrado espacial frente a un escaneo indexado en PostGIS?
+2. ¿Cuál es el límite de volumen de geometrías complejas que DuckDB puede procesar en memoria antes de experimentar degradación por paginación en disco?
+
+Se plantean tres hipótesis verificables:
+
+* **H1**: para ventanas pequeñas (1 % del área) el índice GiST es competitivo o superior; a medida que crece la ventana y en agregaciones sin filtro espacial, DuckDB supera a PostGIS.
+* **H2**: el filtro sobre `bbox` reduce la latencia y los bytes leídos solo cuando el archivo está ordenado espacialmente.
+* **H3**: en el cruce espacial, reducir `memory_limit` por debajo del conjunto de trabajo aumenta la latencia por desborde a disco hasta producir errores de memoria.
+
+## Antecedentes en el trabajo de tesis
+
+El patrón evaluado se implementó primero en la plataforma de monitoreo de enfermedades foliares del maíz desarrollada como tesis de maestría del autor (repositorio privado). El 7 de octubre de 2026 se incorporó un servicio que adjunta la base PostGIS a una conexión DuckDB en memoria (`ATTACH ... (TYPE postgres)`), cruza las estadísticas zonales con los lotes y exporta el resultado con `COPY ... (FORMAT PARQUET)`. El código original se conserva en `antecedentes/tesis_purdue_maize/` con su fecha de autoría.
+
+Esa implementación dejó dos aprendizajes que este proyecto corrige: las consultas se construían concatenando texto (riesgo de inyección SQL), y no se verificaba que la salida incluyera los metadatos `geo`, de modo que el archivo podía ser Parquet común y no GeoParquet. El taller usa parámetros enlazados y audita los metadatos en cada exportación.
+
+## Diseño experimental
+
+### Datos
+
+* **Overture Maps, tema `buildings`**: huellas de edificaciones dentro del rectángulo $[-74.23, -73.99] \times [4.47, 4.84]$ (zona urbana de Bogotá D. C.), leídas directamente del almacenamiento S3 público con DuckDB [@overturedocsduckdb]. La versión exacta queda registrada en la salida de `scripts/01_preparar_datos.py`.
+* **Grilla regular** de celdas de 0.0045° (~500 m) sobre la misma extensión.
+* **Conjuntos sintéticos** de 1, 5 y 10 millones de polígonos rectangulares con semilla fija, para el barrido de volumen de la pregunta 2.
+
+Cada conjunto se escribe en dos archivos GeoParquet con grupos de 100 000 filas y compresión ZSTD: uno ordenado por curva de Hilbert y otro en orden aleatorio. Los mismos registros se cargan en PostGIS a través de WKB, con índices GiST y B-Tree y `VACUUM ANALYZE`.
+
+### Entorno de ejecución
+
+| Componente | Versión o valor |
+|:-|:--|
+| PostgreSQL/PostGIS | imagen `postgis/postgis:17-3.5` |
+| DuckDB | 1.5.6 (extensiones `spatial`, `httpfs`, `postgres`) |
+| Python | 3.12 (imagen `python:3.12-slim`) |
+| CPU y RAM por contenedor | 4 núcleos, 6 GB (configurable en `.env`) |
+| `shared_buffers` / `work_mem` | 1 GB / 64 MB |
+| `memory_limit` de DuckDB | 2 GB (variable en E3) |
+| Equipo anfitrión | *completar: procesador, RAM, tipo de disco, sistema operativo* |
+
+: Entorno experimental {#tbl-entorno}
+
+### Experimentos
+
+| Código | Consulta | Variantes |
+|:-|:---|:---|
+| E0 | `SELECT 1` | proceso DuckDB vacío (línea base de RSS y lecturas) |
+| E1 | Conteo de edificaciones en ventanas del 1 %, 10 % y 50 % del área | `pg_gist`, `pg_seq`, `ddb_bbox`, `ddb_sin_bbox`, `ddb_bbox_desordenado` |
+| E2 | Conteo y altura media por clase | `pg`, `ddb` |
+| E3 | Edificaciones por celda de la grilla (cruce espacial) | `pg_gist`; `ddb` con `memory_limit` de 256 MB, 512 MB, 1 GB y 2 GB |
+
+: Matriz experimental {#tbl-matriz-experimental}
+
+### Métricas y procedimiento
+
+Cada variante se ejecuta una vez como calentamiento y cinco veces de forma medida; se reportan la mediana y el rango intercuartílico. Las consultas DuckDB se ejecutan en un subproceso nuevo para aislar su pico de memoria residente (`ru_maxrss`), su tiempo de CPU y sus lecturas (`rchar` y `read_bytes` de `/proc/self/io`), y al pico de RSS se le resta la mediana de E0. En PostGIS se mide la latencia de extremo a extremo desde el cliente y, en una ejecución adicional, `EXPLAIN (ANALYZE, BUFFERS)` aporta el tiempo de ejecución en el servidor y los bloques leídos de la caché (`shared hit`), del disco (`shared read`) y temporales. La memoria del servidor se muestrea con `docker stats`. La aceleración se define como
+
+$$
+S = \frac{\tilde{t}_{\text{PostGIS}}}{\tilde{t}_{\text{DuckDB}}}
+$$ {#eq-aceleracion}
+
+donde $\tilde{t}$ es la mediana de la latencia de extremo a extremo.
+
+```{python}
+#| label: query-resumen-resultados
+import pandas as pd
+
+resumen = pd.read_csv("resultados/resumen.csv")
+e1 = resumen[resumen["experimento"] == "E1"].pivot(
+    index="parametro", columns="variante", values="t_mediana_s"
+)
+e1["S_gist_vs_bbox"] = e1["pg_gist"] / e1["ddb_bbox"]   # ecuación de aceleración
+e1
+```
+
+### Amenazas a la validez
+
+* **Caché**: PostgreSQL conserva páginas en `shared_buffers` entre repeticiones, mientras que cada subproceso DuckDB arranca vacío (aunque comparte la caché de páginas del sistema operativo). Se reportan ambos estados de caché y se documenta cuál favorece a quién.
+* **Costo de la conexión**: la latencia de PostGIS incluye abrir la conexión y transferir el resultado; la de DuckDB incluye cargar las extensiones. Ambos costos forman parte de la experiencia real de un analista y se mantienen.
+* **Semántica geométrica**: ambos motores trabajan en coordenadas planas EPSG:4326 para los predicados; los conteos se verifican variante por variante con `scripts/04_graficas.py`.
+* **Representatividad**: las huellas de edificaciones son polígonos simples; geometrías complejas (límites administrativos, redes) pueden cambiar las conclusiones de la pregunta 2.
+
+## Resultados
+
+::: {.callout-important}
+Completar después de ejecutar el benchmark. Cada valor debe provenir de `resultados/resumen.csv`.
+:::
+
+| Ventana | `pg_gist` (s) | `pg_seq` (s) | `ddb_bbox` (s) | `ddb_sin_bbox` (s) | `ddb_bbox_desordenado` (s) | $S$ |
+|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| 1 % | | | | | | |
+| 10 % | | | | | | |
+| 50 % | | | | | | |
+
+: E1. Latencia mediana del filtro espacial por ventana {#tbl-resultados-e1}
+
+| Variante | Latencia (s) | CPU (s) | RSS neto (MB) | Lecturas (MB) | `shared read` |
+|:-|:-:|:-:|:-:|:-:|:-:|
+| `pg` | | | | | |
+| `ddb` | | | | | |
+
+: E2. Agregación analítica por clase {#tbl-resultados-e2}
+
+| Variante | `memory_limit` | Latencia (s) | RSS neto (MB) | Estado |
+|:-|:-:|:-:|:-:|:-|
+| `pg_gist` | — | | | |
+| `ddb` | 256 MB | | | |
+| `ddb` | 512 MB | | | |
+| `ddb` | 1 GB | | | |
+| `ddb` | 2 GB | | | |
+
+: E3. Cruce espacial según presupuesto de memoria {#tbl-resultados-e3}
+
+<!-- Descomentar cuando existan las figuras:
+![Latencia mediana del filtro por ventana; las barras de error representan medio rango intercuartílico.](../../resultados/figuras/e1_ventanas.png){#fig-e1-ventanas}
+
+![Latencia y memoria residente neta del cruce espacial en DuckDB según memory_limit; la línea discontinua es PostGIS con GiST.](../../resultados/figuras/e3_memoria.png){#fig-e3-memoria}
+-->
+
+## Discusión
+
+*Completar con los resultados.* Guía para el análisis:
+
+* Contrastar H1 con la @tbl-resultados-e1: identificar el tamaño de ventana a partir del cual $S > 1$ y relacionarlo con la selectividad del índice GiST.
+* Contrastar H2 comparando `ddb_bbox` con `ddb_bbox_desordenado` y con los bytes leídos; relacionarlo con la @eq-fraccion-grupos.
+* Contrastar H3 con la @tbl-resultados-e3: identificar el `memory_limit` a partir del cual la latencia se degrada o la consulta falla, y repetir con los volúmenes sintéticos para responder la pregunta 2.
+* Separar, con E0 y con los tiempos de servidor de `EXPLAIN ANALYZE`, qué parte de la diferencia proviene del formato columnar y qué parte de eliminar el socket cliente-servidor.
+
+## Limitaciones de la tecnología evaluada
+
+* DuckDB admite un único proceso escritor sobre su archivo nativo; varios procesos solo pueden abrirlo en modo de lectura [@duckdbconcurrency]. No reemplaza a PostGIS como sistema de registro multiusuario.
+* El índice R-tree de DuckDB solo acelera filtros con argumento constante y no libera sus búferes mientras exista [@duckdbrtree]; los archivos GeoParquet no contienen índice espacial propio.
+* La extensión `spatial` no ofrece topología persistente, enrutamiento ni ráster en base de datos.
+* El ecosistema está en transición entre GeoParquet 1.1 y los tipos nativos de Parquet, y DuckDB 2.0 (octubre de 2026) introduce un nuevo formato de archivo [@duckdb2026v200]; por eso este estudio fija la versión 1.5.6.
+
+## Conclusiones
+
+*Completar con los resultados.* Se espera concluir en qué combinación de volumen, selectividad y orden físico conviene cada motor, y proponer una arquitectura complementaria: PostGIS como sistema de registro transaccional y DuckDB/GeoParquet como capa analítica y de distribución, tal como se implementó en el antecedente de la tesis.
+
+## Reproducibilidad
+
+```{bash}
+#| label: setup-reproducir-capitulo
+cp .env.example .env
+docker compose up -d --build
+docker compose exec lab python scripts/01_preparar_datos.py
+docker compose exec lab python scripts/02_cargar_postgis.py
+docker compose exec lab python scripts/03_benchmark.py --reps 5
+docker compose exec lab python scripts/04_graficas.py
+```
+
+## Declaración de uso de asistentes de IA
+
+<!-- Ajustar este párrafo antes de la entrega para que describa exactamente el uso real. -->
+Se utilizó un asistente de IA (Claude, de Anthropic) como apoyo para estructurar los documentos y redactar el código base de los scripts. Conforme a la política de integridad académica del curso, el autor revisa, ejecuta y debe poder explicar cada línea de código, y todas las cifras experimentales provienen exclusivamente de ejecuciones propias del benchmark.
+
+## Referencias
+
+::: {#refs}
+:::
