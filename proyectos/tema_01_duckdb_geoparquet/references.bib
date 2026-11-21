@@ -1,0 +1,168 @@
+% Referencias del Tema 01: DuckDB espacial y GeoParquet
+
+% ---------------------------------------------------------------- fundamentos
+@inproceedings{guttman1984rtrees,
+  author    = {Guttman, Antonin},
+  title     = {R-Trees: A Dynamic Index Structure for Spatial Searching},
+  booktitle = {Proceedings of the 1984 ACM SIGMOD International Conference on Management of Data},
+  pages     = {47--57},
+  year      = {1984},
+  publisher = {ACM},
+  doi       = {10.1145/602259.602266}
+}
+
+@inproceedings{hellerstein1995gist,
+  author    = {Hellerstein, Joseph M. and Naughton, Jeffrey F. and Pfeffer, Avi},
+  title     = {Generalized Search Trees for Database Systems},
+  booktitle = {Proceedings of the 21st International Conference on Very Large Data Bases (VLDB)},
+  pages     = {562--573},
+  year      = {1995}
+}
+
+@inproceedings{stonebraker2005cstore,
+  author    = {Stonebraker, Mike and Abadi, Daniel J. and Batkin, Adam and Chen, Xuedong and Cherniack, Mitch and Ferreira, Miguel and Lau, Edmond and Lin, Amerson and Madden, Sam and O'Neil, Elizabeth and O'Neil, Pat and Rasin, Alex and Tran, Nga and Zdonik, Stan},
+  title     = {C-Store: A Column-oriented DBMS},
+  booktitle = {Proceedings of the 31st International Conference on Very Large Data Bases (VLDB)},
+  pages     = {553--564},
+  year      = {2005}
+}
+
+@inproceedings{boncz2005x100,
+  author    = {Boncz, Peter and Zukowski, Marcin and Nes, Niels},
+  title     = {MonetDB/X100: Hyper-Pipelining Query Execution},
+  booktitle = {Proceedings of the Second Biennial Conference on Innovative Data Systems Research (CIDR)},
+  year      = {2005}
+}
+
+@article{melnik2010dremel,
+  author  = {Melnik, Sergey and Gubarev, Andrey and Long, Jing Jing and Romer, Geoffrey and Shivakumar, Shiva and Tolton, Matt and Vassilakis, Theo},
+  title   = {Dremel: Interactive Analysis of Web-Scale Datasets},
+  journal = {Proceedings of the VLDB Endowment},
+  volume  = {3},
+  number  = {1--2},
+  pages   = {330--339},
+  year    = {2010}
+}
+
+@article{raasveldt2017hostage,
+  author  = {Raasveldt, Mark and M{\"u}hleisen, Hannes},
+  title   = {Don't Hold My Data Hostage: A Case for Client Protocol Redesign},
+  journal = {Proceedings of the VLDB Endowment},
+  volume  = {10},
+  number  = {10},
+  pages   = {1022--1033},
+  year    = {2017}
+}
+
+@inproceedings{raasveldt2019duckdb,
+  author    = {Raasveldt, Mark and M{\"u}hleisen, Hannes},
+  title     = {DuckDB: An Embeddable Analytical Database},
+  booktitle = {Proceedings of the 2019 International Conference on Management of Data (SIGMOD)},
+  pages     = {1981--1984},
+  year      = {2019},
+  publisher = {ACM},
+  doi       = {10.1145/3299869.3320212}
+}
+
+% ---------------------------------------------------------------- especificaciones
+@misc{geoparquet2023v100,
+  author       = {{GeoParquet Community}},
+  title        = {GeoParquet 1.0.0 Released},
+  year         = {2023},
+  howpublished = {Cloud-Native Geospatial Forum},
+  url          = {https://cloudnativegeo.org/blog/2023/09/geoparquet-1.0.0-released/}
+}
+
+@misc{geoparquet2024v110,
+  author       = {{Open Geospatial Consortium}},
+  title        = {GeoParquet Specification, version 1.1.0},
+  year         = {2024},
+  url          = {https://geoparquet.org/releases/v1.1.0}
+}
+
+@misc{cng2025geoparquet2,
+  author       = {{Cloud-Native Geospatial Forum}},
+  title        = {GeoParquet 2.0: Going Native},
+  year         = {2025},
+  url          = {https://cloudnativegeo.org/blog/2025/02/geoparquet-2.0-going-native/}
+}
+
+@misc{parquet2026geotypes,
+  author       = {{Apache Parquet}},
+  title        = {Native Geospatial Types in Apache Parquet},
+  year         = {2026},
+  url          = {https://parquet.apache.org/blog/2026/02/13/native-geospatial-types-in-apache-parquet/}
+}
+
+% ---------------------------------------------------------------- DuckDB
+@misc{duckdb2023spatial,
+  author       = {{DuckDB Team}},
+  title        = {PostGEESE? Introducing the DuckDB Spatial Extension},
+  year         = {2023},
+  url          = {https://duckdb.org/2023/04/28/spatial}
+}
+
+@misc{duckdb2025v140,
+  author       = {{DuckDB Team}},
+  title        = {Announcing DuckDB 1.4.0 LTS},
+  year         = {2025},
+  url          = {https://duckdb.org/2025/09/16/announcing-duckdb-140}
+}
+
+@misc{duckdb2026v150,
+  author       = {{DuckDB Team}},
+  title        = {Announcing DuckDB 1.5.0},
+  year         = {2026},
+  url          = {https://duckdb.org/2026/03/09/announcing-duckdb-150}
+}
+
+@misc{duckdb2026v200,
+  author       = {{DuckDB Team}},
+  title        = {Announcing DuckDB 2.0.0 LTS ``Cinnamon Teal''},
+  year         = {2026},
+  url          = {https://duckdb.org/2026/10/21/announcing-duckdb-200}
+}
+
+@misc{duckdbhistory,
+  author       = {{DuckDB Foundation}},
+  title        = {History of DuckDB},
+  url          = {https://duckdb.org/history},
+  note         = {Consultado el 21 de noviembre de 2026}
+}
+
+@misc{duckdbrtree,
+  author       = {{DuckDB Team}},
+  title        = {R-Tree Indexes (spatial extension documentation)},
+  url          = {https://duckdb.org/docs/current/core_extensions/spatial/r-tree_indexes},
+  note         = {Consultado el 21 de noviembre de 2026}
+}
+
+@misc{duckdbconcurrency,
+  author       = {{DuckDB Team}},
+  title        = {Handling Concurrency},
+  url          = {https://duckdb.org/docs/current/connect/concurrency},
+  note         = {Consultado el 21 de noviembre de 2026}
+}
+
+@misc{willison2025spatialjoins,
+  author       = {Willison, Simon},
+  title        = {Spatial Joins in DuckDB (comentario al artículo de Max Gabrielsson)},
+  year         = {2025},
+  url          = {https://simonwillison.net/b/8971}
+}
+
+% ---------------------------------------------------------------- datos y aplicaciones
+@misc{overturedocsduckdb,
+  author       = {{Overture Maps Foundation}},
+  title        = {Getting Data: DuckDB},
+  url          = {https://docs.overturemaps.org/getting-data/duckdb},
+  note         = {Consultado el 21 de noviembre de 2026}
+}
+
+@misc{wu2026geolibre,
+  author       = {Wu, Qiusheng},
+  title        = {GeoLibre: A Lightweight, Cloud-Native GIS Platform for Visualizing, Exploring, and Analyzing Geospatial Data},
+  year         = {2026},
+  publisher    = {Zenodo},
+  doi          = {10.5281/zenodo.20785400}
+}
