@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" role="img" aria-labelledby="t2 d2">
+  <title id="t2">Cliente-servidor frente a in-process</title>
+  <desc id="d2">Arriba, el resultado de PostGIS viaja por un socket TCP hasta el cliente. Abajo, DuckDB lee el archivo GeoParquet dentro del mismo proceso.</desc>
+  <rect width="1200" height="300" rx="14" fill="#0b1220"/>
+  <g font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif">
+    <text x="40" y="44" font-size="16" font-weight="700" fill="#93c5fd">PostgreSQL/PostGIS · cliente-servidor</text>
+    <line x1="240" y1="94" x2="900" y2="94" stroke="#334155" stroke-width="2" stroke-dasharray="4 6"/>
+    <rect x="40" y="62" width="200" height="64" rx="10" fill="#1e293b" stroke="#336791" stroke-width="2"/><text x="140" y="100" text-anchor="middle" font-size="15" fill="#e2e8f0">Cliente (Python)</text>
+    <rect x="520" y="62" width="160" height="64" rx="10" fill="#1e293b" stroke="#475569"/><text x="600" y="92" text-anchor="middle" font-size="14" fill="#cbd5e1">socket TCP</text><text x="600" y="112" text-anchor="middle" font-size="12" fill="#94a3b8">serialización</text>
+    <rect x="900" y="62" width="260" height="64" rx="10" fill="#1e293b" stroke="#336791" stroke-width="2"/><text x="1030" y="92" text-anchor="middle" font-size="15" fill="#e2e8f0">Servidor PostGIS</text><text x="1030" y="112" text-anchor="middle" font-size="12" fill="#94a3b8">heap 8 KB · GiST</text>
+    <circle r="7" cx="900" cy="94" fill="#93c5fd"><animate attributeName="cx" values="900;240" dur="2.4s" repeatCount="indefinite"/></circle>
+    <circle r="7" cx="900" cy="94" fill="#93c5fd"><animate attributeName="cx" values="900;240" dur="2.4s" begin="0.8s" repeatCount="indefinite"/></circle>
+    <circle r="7" cx="900" cy="94" fill="#93c5fd"><animate attributeName="cx" values="900;240" dur="2.4s" begin="1.6s" repeatCount="indefinite"/></circle>
+
+    <text x="40" y="184" font-size="16" font-weight="700" fill="#FFD43B">DuckDB · in-process sobre GeoParquet</text>
+    <rect x="40" y="202" width="640" height="64" rx="10" fill="#1e293b" stroke="#FFD43B" stroke-width="2"/>
+    <text x="200" y="240" text-anchor="middle" font-size="15" fill="#e2e8f0">Proceso Python</text>
+    <rect x="360" y="214" width="300" height="40" rx="8" fill="#2a2a12" stroke="#FFD43B"/><text x="510" y="239" text-anchor="middle" font-size="14" fill="#FFD43B">DuckDB (vectorizado)</text>
+    <rect x="900" y="202" width="260" height="64" rx="10" fill="#1e293b" stroke="#475569"/><text x="1030" y="232" text-anchor="middle" font-size="15" fill="#e2e8f0">GeoParquet</text><text x="1030" y="252" text-anchor="middle" font-size="12" fill="#94a3b8">disco local o S3</text>
+    <line x1="680" y1="234" x2="900" y2="234" stroke="#334155" stroke-width="2"/>
+    <rect x="878" y="226" width="22" height="16" rx="3" fill="#FFD43B"><animate attributeName="x" values="878;662" dur="1.2s" repeatCount="indefinite"/></rect>
+  </g>
+</svg>

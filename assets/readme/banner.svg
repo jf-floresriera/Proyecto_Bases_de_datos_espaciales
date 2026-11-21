@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 340" width="1200" height="340" role="img" aria-labelledby="t d">
+  <title id="t">Tema 01 · DuckDB espacial y GeoParquet frente a PostgreSQL/PostGIS</title>
+  <desc id="d">Un archivo GeoParquet con ocho grupos de filas; un filtro espacial recorre las estadísticas bbox y solo lee los grupos que intersecan la ventana.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0b1220"/><stop offset="1" stop-color="#16213a"/></linearGradient>
+    <linearGradient id="acc" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#FFD43B"/><stop offset="1" stop-color="#336791"/></linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#FFD43B" stroke-opacity="0.05"/>
+      <animateTransform attributeName="patternTransform" type="translate" from="0 0" to="40 40" dur="10s" repeatCount="indefinite"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="340" fill="url(#bg)"/>
+  <rect width="1200" height="340" fill="url(#grid)"/>
+  <rect x="0" y="0" width="8" height="340" fill="url(#acc)"/>
+  <text x="56" y="72" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="14" fill="#FFD43B" letter-spacing="4">TEMA 01 · BASES DE DATOS ESPACIALES · UNAL 2026-2</text>
+  <text x="56" y="132" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="46" font-weight="700" fill="#f8fafc">DuckDB espacial</text>
+  <text x="56" y="182" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="46" font-weight="700" fill="#f8fafc">+ GeoParquet</text>
+  <text x="56" y="218" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="19" fill="#cbd5e1">frente a PostgreSQL/PostGIS con índices GiST</text>
+  <text x="56" y="252" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" fill="#94a3b8">Latencia · CPU · memoria RAM · E/S · planes de ejecución</text>
+  <text x="56" y="300" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="13" fill="#64748b">WHERE bbox.xmin &lt;= x1 AND bbox.xmax &gt;= x0 ...</text>
+  <rect x="56" y="308" width="0" height="2" fill="#FFD43B"><animate attributeName="width" values="0;380;380;0" keyTimes="0;0.4;0.9;1" dur="6s" repeatCount="indefinite"/></rect>
+  <text x="640" y="104" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#94a3b8">edificios.parquet · grupos de filas (orden Hilbert)</text>
+  
+    <g>
+      <rect x="640" y="120" width="52" height="150" rx="6" fill="#1e293b" stroke="#475569"/>
+      <rect x="646" y="128" width="40" height="30" rx="3" fill="#336791" opacity="0.85"/>
+      <rect x="646" y="164" width="40" height="30" rx="3" fill="#475569"/>
+      <rect x="646" y="200" width="40" height="30" rx="3" fill="#475569"/>
+      <rect x="646" y="236" width="40" height="26" rx="3" fill="#3b4a63" opacity="0.25">
+        <animate attributeName="opacity" values="0.25;0.25;0.08;0.08;0.25" keyTimes="0;0.08;0.12;0.9;1" dur="6s" repeatCount="indefinite"/>
+      </rect>
+      <text x="666" y="290" text-anchor="middle" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="11" fill="#94a3b8">RG0</text>
+    </g>
+    <g>
+      <rect x="702" y="120" width="52" height="150" rx="6" fill="#1e293b" stroke="#475569"/>
+      <rect x="708" y="128" width="40" height="30" rx="3" fill="#336791" opacity="0.85"/>
+      <rect x="708" y="164" width="40" height="30" rx="3" fill="#475569"/>
+      <rect x="708" y="200" width="40" height="30" rx="3" fill="#475569"/>
+      <rect x="708" y="236" width="40" height="26" rx="3" fill="#3b4a63" opacity="0.25">
+        <animate attributeName="opacity" values="0.25;0.25;0.08;0.08;0.25" keyTimes="0;0.13;0.17;0.9;1" dur="6s" repeatCount="indefinite"/>
+      </rect>
+      <text x="728" y="290" text-anchor="middle" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="11" fill="#94a3b8">RG1</text>
+    </g>
+    <g>
+      <rect x="764" y="120" width="52" height="150" rx="6" fill="#1e293b" stroke="#475569"/>
+      <rect x="770" y="128" width="40" height="30" rx="3" fill="#336791" opacity="0.85"/>
+      <rect x="770" y="164" width="40" height="30" rx="3" fill="#475569"/>
+      <rect x="770" y="200" width="40" height="30" rx="3" fill="#475569"/>
+      <rect x="770" y="236" width="40" height="26" rx="3" fill="#FFD43B" opacity="0.25">
+        <animate attributeName="opacity" values="0.25;0.25;1;1;0.25" keyTimes="0;0.18;0.22;0.9;1" dur="6s" repeatCount="indefinite"/>
+      </rect>
+      <text x="790" y="290" text-anchor="middle" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="11" fill="#94a3b8">RG2</text>
+    </g>
+    <g>
+      <rect x="826" y="120" width="52" height="150" rx="6" fill="#1e293b" stroke="#475569"/>
+      <rect x="832" y="128" width="40" height="30" rx="3" fill="#336791" opacity="0.85"/>
+      <rect x="832" y="164" width="40" height="30" rx="3" fill="#475569"/>
+      <rect x="832" y="200" width="40" height="30" rx="3" fill="#475569"/>
+      <rect x="832" y="236" width="40" height="26" rx="3" fill="#FFD43B" opacity="0.25">
+        <animate attributeName="opacity" values="0.25;0.25;1;1;0.25" keyTimes="0;0.23;0.27;0.9;1" dur="6s" repeatCount="indefinite"/>
+      </rect>
+      <text x="852" y="290" text-anchor="middle" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="11" fill="#94a3b8">RG3</text>
+    </g>
+    <g>
+      <rect x="888" y="120" width="52" height="150" rx="6" fill="#1e293b" stroke="#475569"/>
+      <rect x="894" y="128" width="40" height="30" rx="3" fill="#336791" opacity="0.85"/>
+      <rect x="894" y="164" width="40" height="30" rx="3" fill="#475569"/>
+      <rect x="894" y="200" width="40" height="30" rx="3" fill="#475569"/>
+      <rect x="894" y="236" width="40" height="26" rx="3" fill="#3b4a63" opacity="0.25">
+        <animate attributeName="opacity" values="0.25;0.25;0.08;0.08;0.25" keyTimes="0;0.28;0.32;0.9;1" dur="6s" repeatCount="indefinite"/>
+      </rect>
+      <text x="914" y="290" text-anchor="middle" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="11" fill="#94a3b8">RG4</text>
+    </g>
+    <g>
+      <rect x="950" y="120" width="52" height="150" rx="6" fill="#1e293b" stroke="#475569"/>
+      <rect x="956" y="128" width="40" height="30" rx="3" fill="#336791" opacity="0.85"/>
+      <rect x="956" y="164" width="40" height="30" rx="3" fill="#475569"/>
+      <rect x="956" y="200" width="40" height="30" rx="3" fill="#475569"/>
+      <rect x="956" y="236" width="40" height="26" rx="3" fill="#3b4a63" opacity="0.25">
+        <animate attributeName="opacity" values="0.25;0.25;0.08;0.08;0.25" keyTimes="0;0.33;0.37;0.9;1" dur="6s" repeatCount="indefinite"/>
+      </rect>
+      <text x="976" y="290" text-anchor="middle" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="11" fill="#94a3b8">RG5</text>
+    </g>
+    <g>
+      <rect x="1012" y="120" width="52" height="150" rx="6" fill="#1e293b" stroke="#475569"/>
+      <rect x="1018" y="128" width="40" height="30" rx="3" fill="#336791" opacity="0.85"/>
+      <rect x="1018" y="164" width="40" height="30" rx="3" fill="#475569"/>
+      <rect x="1018" y="200" width="40" height="30" rx="3" fill="#475569"/>
+      <rect x="1018" y="236" width="40" height="26" rx="3" fill="#3b4a63" opacity="0.25">
+        <animate attributeName="opacity" values="0.25;0.25;0.08;0.08;0.25" keyTimes="0;0.38;0.42;0.9;1" dur="6s" repeatCount="indefinite"/>
+      </rect>
+      <text x="1038" y="290" text-anchor="middle" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="11" fill="#94a3b8">RG6</text>
+    </g>
+    <g>
+      <rect x="1074" y="120" width="52" height="150" rx="6" fill="#1e293b" stroke="#475569"/>
+      <rect x="1080" y="128" width="40" height="30" rx="3" fill="#336791" opacity="0.85"/>
+      <rect x="1080" y="164" width="40" height="30" rx="3" fill="#475569"/>
+      <rect x="1080" y="200" width="40" height="30" rx="3" fill="#475569"/>
+      <rect x="1080" y="236" width="40" height="26" rx="3" fill="#3b4a63" opacity="0.25">
+        <animate attributeName="opacity" values="0.25;0.25;0.08;0.08;0.25" keyTimes="0;0.43;0.47;0.9;1" dur="6s" repeatCount="indefinite"/>
+      </rect>
+      <text x="1100" y="290" text-anchor="middle" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="11" fill="#94a3b8">RG7</text>
+    </g>
+  <!-- ventana de consulta que barre los grupos -->
+  <rect x="632" y="112" width="68" height="166" rx="8" fill="none" stroke="#FFD43B" stroke-width="2" stroke-dasharray="6 4">
+    <animate attributeName="x" values="632;1066;1066;632" keyTimes="0;0.5;0.9;1" dur="6s" repeatCount="indefinite"/>
+  </rect>
+  <text x="640" y="318" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#FFD43B">2 de 8 grupos leídos · el resto se poda por estadísticas min/max
+    <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.45;0.55;0.9;1" dur="6s" repeatCount="indefinite"/>
+  </text>
+</svg>
