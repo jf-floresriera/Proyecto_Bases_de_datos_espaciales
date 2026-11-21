@@ -1,0 +1,72 @@
+# Entorno reproducible del Tema 01: DuckDB espacial y GeoParquet
+#
+#   docker compose up -d --build        # levanta PostGIS y el laboratorio
+#   docker compose exec lab bash        # terminal dentro del laboratorio
+#
+# Credenciales: se leen de .env (copiar .env.example). Los valores por defecto
+# solo sirven para el equipo local del taller; no reutilizarlos en producción.
+
+services:
+  db-postgis:
+    image: postgis/postgis:17-3.5
+    container_name: bde_t01_postgis
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PGUSER:-bde}
+      POSTGRES_PASSWORD: ${PGPASSWORD:-bde_taller}
+      POSTGRES_DB: ${PGDATABASE:-bde_t01}
+    # Parámetros de memoria explícitos para que la comparación con DuckDB
+    # se haga con presupuestos de RAM conocidos y documentados.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-1GB}
+      - -c
+      - work_mem=${PG_WORK_MEM:-64MB}
+      - -c
+      - max_parallel_workers_per_gather=${PG_PARALLEL_WORKERS:-4}
+      - -c
+      - track_io_timing=on
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+    ports:
+      - "${PGPORT_HOST:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql:/sql:ro
+    shm_size: 1g
+    # Mismo presupuesto de CPU y RAM que el laboratorio (comparación justa)
+    cpus: ${LAB_CPUS:-4}
+    mem_limit: ${LAB_MEM:-6g}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-bde} -d ${PGDATABASE:-bde_t01}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  lab:
+    build:
+      context: ./docker/lab
+    container_name: bde_t01_lab
+    depends_on:
+      db-postgis:
+        condition: service_healthy
+    environment:
+      PGHOST: db-postgis
+      PGPORT: 5432
+      PGUSER: ${PGUSER:-bde}
+      PGPASSWORD: ${PGPASSWORD:-bde_taller}
+      PGDATABASE: ${PGDATABASE:-bde_t01}
+      # Presupuesto de memoria de DuckDB (se varía en el experimento E3)
+      DUCKDB_MEMORY_LIMIT: ${DUCKDB_MEMORY_LIMIT:-2GB}
+      DUCKDB_THREADS: ${DUCKDB_THREADS:-4}
+    working_dir: /work
+    volumes:
+      - ./:/work
+    # Mismos núcleos y RAM para ambos motores durante el benchmark
+    cpus: ${LAB_CPUS:-4}
+    mem_limit: ${LAB_MEM:-6g}
+    command: ["sleep", "infinity"]
+
+volumes:
+  pgdata:
