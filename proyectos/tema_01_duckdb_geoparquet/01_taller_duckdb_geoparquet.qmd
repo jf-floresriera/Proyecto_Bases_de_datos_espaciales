@@ -1,0 +1,323 @@
+---
+title: "Taller guiado: DuckDB espacial y GeoParquet frente a PostGIS"
+subtitle: "Tema 01 · Bloque 2 (60 minutos, live coding)"
+author: "Jesús Enrique Flores Riera"
+lang: es
+engine: knitr
+execute:
+  eval: false
+  echo: true
+format:
+  html:
+    toc: true
+    number-sections: true
+    code-copy: true
+bibliography: references.bib
+---
+
+## Propósito del taller
+
+Al terminar los 60 minutos, cada asistente habrá ejecutado en su equipo local el mismo filtro espacial y el mismo cruce espacial en PostgreSQL/PostGIS y en DuckDB sobre GeoParquet, habrá leído datos abiertos directamente desde almacenamiento en la nube y habrá observado con sus propios planes de ejecución por qué el empuje de predicados funciona (o no) según el orden físico de los datos.
+
+Todas las instrucciones se ejecutan en la terminal integrada de Visual Studio Code, desde la raíz del repositorio.
+
+## Preparación previa (antes de la sesión)
+
+La descarga de datos y la construcción de imágenes toman varios minutos, por lo que se realizan antes del taller.
+
+```{bash}
+#| label: setup-clonar-y-construir
+git clone <URL-del-repositorio> tema01
+cd tema01
+cp .env.example .env
+docker compose build
+docker compose up -d
+```
+
+```{bash}
+#| label: setup-preparar-datos
+# Opción A: edificaciones de Overture Maps para Bogotá (requiere red)
+docker compose exec lab python scripts/01_preparar_datos.py
+
+# Opción B (aula sin red): dos millones de polígonos sintéticos con semilla fija
+docker compose exec lab python scripts/01_preparar_datos.py --fuente sintetico --n 2000000
+
+# Carga de los mismos registros en PostGIS (índices GiST y B-Tree incluidos)
+docker compose exec lab python scripts/02_cargar_postgis.py
+```
+
+::: {.callout-tip}
+## Punto de control
+
+La salida de ambos scripts debe terminar con líneas `[audit]`. El número de filas reportado para `edificios.parquet` y para `t01.edificios` debe ser idéntico.
+:::
+
+## Paso 1: verificación del entorno (minutos 0 a 10)
+
+```{bash}
+#| label: docker-estado-contenedores
+docker compose ps
+```
+
+Ambos servicios (`db-postgis` y `lab`) deben aparecer en estado `running`, y `db-postgis` además como `healthy`.
+
+```{bash}
+#| label: docker-versiones
+docker compose exec db-postgis psql -U bde -d bde_t01 -c "SELECT postgis_full_version();"
+docker compose exec lab python -c "import duckdb; print(duckdb.__version__)"
+```
+
+Se abre una sesión interactiva de Python dentro del laboratorio; el resto del taller se ejecuta en ella, salvo los bloques SQL de PostGIS.
+
+```{bash}
+#| label: docker-sesion-python
+docker compose exec lab python
+```
+
+```{python}
+#| label: setup-conexion-duckdb
+import sys, time
+sys.path.insert(0, "scripts")
+from comun import conectar_duckdb, EDIFICIOS, EDIFICIOS_SIN_ORDEN, GRILLA
+
+con = conectar_duckdb(memoria="2GB", hilos=4)
+con.sql("SELECT current_setting('memory_limit') AS memoria, current_setting('threads') AS hilos").show()
+```
+
+Obsérvese que no hay servidor ni cadena de conexión: el motor vive dentro del proceso de Python.
+
+## Paso 2: consulta directa a datos en la nube (minutos 10 a 20)
+
+DuckDB consulta los archivos GeoParquet de Overture Maps en S3 sin ingestión previa. Solo se transfieren los grupos de filas cuyo `bbox` interseca el área pedida: la Ciudad Universitaria de la Universidad Nacional.
+
+```{python}
+#| label: setup-overture-release
+con.execute("SET s3_region = 'us-west-2'")
+release = con.execute(
+    "SELECT latest FROM read_json_auto('https://stac.overturemaps.org/catalog.json')"
+).fetchone()[0]
+ruta = f"s3://overturemaps-us-west-2/release/{release}/theme=buildings/type=building/*.parquet"
+release
+```
+
+```{python}
+#| label: query-overture-campus
+t0 = time.perf_counter()
+campus = con.sql(f"""
+    SELECT id, names.primary AS nombre, height AS altura, geometry AS geom
+    FROM read_parquet('{ruta}', hive_partitioning = true)
+    WHERE bbox.xmin <= -74.075 AND bbox.xmax >= -74.090
+      AND bbox.ymin <=   4.645 AND bbox.ymax >=   4.630
+""")
+print(campus.aggregate("count(*)").fetchone()[0], "edificaciones en", round(time.perf_counter() - t0, 1), "s")
+campus.limit(5).show()
+```
+
+::: {.callout-note}
+## Para discutir
+
+El conjunto global de edificaciones de Overture ocupa cientos de GB y aun así la consulta tarda segundos. La razón está en el Paso 3.
+:::
+
+## Paso 3: anatomía del archivo GeoParquet (minutos 20 a 30)
+
+```{python}
+#| label: audit-esquema-parquet
+con.sql(f"SELECT name, type, logical_type FROM parquet_schema('{EDIFICIOS}')").show()
+```
+
+```{python}
+#| label: audit-metadatos-geo
+con.sql(f"""
+    SELECT decode(value) AS geo
+    FROM parquet_kv_metadata('{EDIFICIOS}')
+    WHERE decode(key) = 'geo'
+""").show(max_width=200)
+```
+
+La clave `geo` declara la versión de GeoParquet, la columna primaria, la codificación WKB y el sistema de referencia. Si aparece vacía, el archivo es Parquet común: este fue uno de los aprendizajes del antecedente de la tesis.
+
+```{python}
+#| label: audit-estadisticas-grupos
+# Rango de bbox.xmin en los primeros grupos de filas del archivo ordenado y del desordenado
+for archivo in (EDIFICIOS, EDIFICIOS_SIN_ORDEN):
+    print(archivo.name)
+    con.sql(f"""
+        SELECT row_group_id, row_group_num_rows,
+               stats_min_value AS xmin_min, stats_max_value AS xmin_max
+        FROM parquet_metadata('{archivo}')
+        WHERE path_in_schema LIKE '%xmin%'
+        ORDER BY row_group_id
+        LIMIT 5
+    """).show()
+```
+
+En el archivo ordenado por curva de Hilbert cada grupo de filas cubre un rango angosto de longitudes; en el desordenado cada grupo cubre prácticamente toda la ciudad. Esta diferencia decide si el empuje de predicados puede descartar grupos.
+
+## Paso 4: línea base en PostGIS (minutos 30 a 40)
+
+En una segunda terminal se abre `psql` contra el contenedor.
+
+```{bash}
+#| label: docker-psql
+docker compose exec db-postgis psql -U bde -d bde_t01
+```
+
+```{sql}
+--| label: query-pg-ventana-gist
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT count(*)
+FROM t01.edificios
+WHERE geom && ST_MakeEnvelope(-74.11, 4.62, -74.05, 4.68, 4326)
+  AND ST_Intersects(geom, ST_MakeEnvelope(-74.11, 4.62, -74.05, 4.68, 4326));
+```
+
+Se identifican en el plan el nodo `Bitmap Index Scan` sobre `edificios_geom_gist`, el tiempo de ejecución y los bloques `shared hit` (en caché) frente a `read` (desde disco).
+
+```{sql}
+--| label: query-pg-ventana-secuencial
+SET enable_indexscan = off;
+SET enable_bitmapscan = off;
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT count(*)
+FROM t01.edificios
+WHERE geom && ST_MakeEnvelope(-74.11, 4.62, -74.05, 4.68, 4326)
+  AND ST_Intersects(geom, ST_MakeEnvelope(-74.11, 4.62, -74.05, 4.68, 4326));
+
+RESET enable_indexscan;
+RESET enable_bitmapscan;
+```
+
+```{sql}
+--| label: audit-pg-tamano
+SELECT pg_size_pretty(pg_relation_size('t01.edificios'))           AS tabla,
+       pg_size_pretty(pg_relation_size('t01.edificios_geom_gist')) AS indice_gist,
+       pg_size_pretty(pg_total_relation_size('t01.edificios'))     AS total;
+```
+
+```{bash}
+#| label: audit-tamano-geoparquet
+ls -lh datos/*.parquet
+```
+
+Se compara el tamaño en disco de la tabla más sus índices con el del archivo GeoParquet comprimido con ZSTD.
+
+## Paso 5: empuje de predicados en DuckDB (minutos 40 a 50)
+
+De vuelta en la sesión de Python se ejecuta la misma ventana de cuatro formas.
+
+```{python}
+#| label: query-ddb-ventana-variantes
+VENTANA = "ST_MakeEnvelope(-74.11, 4.62, -74.05, 4.68)"
+FILTRO_BBOX = ("bbox.xmin <= -74.05 AND bbox.xmax >= -74.11 AND "
+               "bbox.ymin <= 4.68 AND bbox.ymax >= 4.62 AND ")
+
+def ventana(archivo, con_bbox):
+    sql = (f"SELECT count(*) FROM read_parquet('{archivo}') "
+           f"WHERE {FILTRO_BBOX if con_bbox else ''}ST_Intersects(geom, {VENTANA})")
+    t0 = time.perf_counter()
+    n = con.execute(sql).fetchone()[0]
+    return n, round(time.perf_counter() - t0, 3)
+
+for archivo in (EDIFICIOS, EDIFICIOS_SIN_ORDEN):
+    for con_bbox in (True, False):
+        print(f"{archivo.name:28} bbox={con_bbox!s:5}", ventana(archivo, con_bbox))
+```
+
+```{python}
+#| label: query-ddb-explain-analyze
+print(con.sql(f"""
+    EXPLAIN ANALYZE
+    SELECT count(*) FROM read_parquet('{EDIFICIOS}')
+    WHERE {FILTRO_BBOX}ST_Intersects(geom, {VENTANA})
+""").fetchall()[0][1])
+```
+
+::: {.callout-tip}
+## Punto de control
+
+Los cuatro conteos deben ser iguales entre sí y al conteo de PostGIS del Paso 4. En el plan de DuckDB, el operador `TABLE_SCAN` (lectura de Parquet) muestra los filtros empujados y cuántas filas salieron del lector.
+:::
+
+## Paso 6: cruce espacial, memoria y exportación (minutos 50 a 60)
+
+```{python}
+#| label: query-ddb-cruce-grilla
+CRUCE = f"""
+    SELECT g.celda_id, any_value(g.geom) AS geom, count(*) AS n_edificios
+    FROM read_parquet('{GRILLA}') g
+    JOIN read_parquet('{EDIFICIOS}') e ON ST_Intersects(g.geom, e.geom)
+    GROUP BY g.celda_id
+"""
+print(con.sql(f"EXPLAIN {CRUCE}").fetchall()[0][1])  # buscar el operador SPATIAL_JOIN
+
+for memoria in ("2GB", "256MB"):
+    con.execute(f"SET memory_limit = '{memoria}'")
+    t0 = time.perf_counter()
+    try:
+        filas = con.execute(f"SELECT count(*) FROM ({CRUCE})").fetchone()[0]
+        print(memoria, filas, "celdas", round(time.perf_counter() - t0, 2), "s")
+    except Exception as error:
+        print(memoria, "ERROR:", error)
+con.execute("SET memory_limit = '2GB'")
+```
+
+La misma consulta en PostGIS, para comparar el plan:
+
+```{sql}
+--| label: query-pg-cruce-grilla
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT g.celda_id, count(*) AS n_edificios
+FROM t01.grilla g
+JOIN t01.edificios e ON ST_Intersects(g.geom, e.geom)
+GROUP BY g.celda_id;
+```
+
+Finalmente se exporta la densidad por celda como GeoParquet y se corrige la práctica insegura del antecedente: los valores provenientes del usuario se pasan como **parámetros** (`?`) y no concatenados en el texto SQL.
+
+```{python}
+#| label: export-densidad-geoparquet
+minimo = 10  # en una API, este valor vendría de la petición del usuario
+con.execute(
+    f"CREATE OR REPLACE TEMP TABLE densidad AS SELECT * FROM ({CRUCE}) WHERE n_edificios >= ?",
+    [minimo],
+)
+con.execute("COPY densidad TO 'resultados/densidad_celdas.parquet' (FORMAT PARQUET)")
+con.sql("SELECT count(*) FROM read_parquet('resultados/densidad_celdas.parquet')").show()
+```
+
+```{python}
+#| label: audit-densidad-geo
+con.sql("""
+    SELECT decode(value) FROM parquet_kv_metadata('resultados/densidad_celdas.parquet')
+    WHERE decode(key) = 'geo'
+""").show(max_width=200)
+```
+
+El archivo `resultados/densidad_celdas.parquet` se abre directamente en QGIS (arrastrar y soltar) o en GeoLibre (*Add Data → GeoParquet Layer*) sin servidor intermedio [@wu2026geolibre].
+
+## Cierre y trabajo autónomo
+
+El benchmark completo (cinco repeticiones por variante) toma más tiempo que la sesión y se ejecuta fuera del aula:
+
+```{bash}
+#| label: setup-benchmark-completo
+# Terminal 1 (sistema anfitrión): monitoreo de CPU y RAM de ambos contenedores
+bash scripts/monitor_docker.sh resultados/docker_stats.csv
+
+# Terminal 2: experimentos E0 a E3 y figuras
+docker compose exec lab python scripts/03_benchmark.py --reps 5
+docker compose exec lab python scripts/04_graficas.py
+```
+
+```{bash}
+#| label: docker-limpieza
+docker compose down        # detiene los servicios y conserva el volumen
+docker compose down -v     # además borra la base de datos (solo si se desea reiniciar)
+```
+
+## Referencias
+
+::: {#refs}
+:::
