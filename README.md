@@ -75,6 +75,7 @@ Estructura exigida por la guía del curso (`proyectos/tema_XX_[nombre_tema]/`):
 | :-- | :-- |
 | [`01_informe_duckdb_geoparquet.qmd`](proyectos/tema_01_duckdb_geoparquet/01_informe_duckdb_geoparquet.qmd) | Reporte científico; se compila como capítulo del libro del curso |
 | [`01_slides_duckdb_geoparquet.qmd`](proyectos/tema_01_duckdb_geoparquet/01_slides_duckdb_geoparquet.qmd) | Diapositivas Quarto RevealJS del bloque 1 |
+| [`presentacion/index.html`](proyectos/tema_01_duckdb_geoparquet/presentacion/index.html) | Presentación interactiva HTML5 autocontenida (28 diapositivas animadas; flechas, rueda o botones; tecla N para notas del expositor) |
 | [`01_taller_duckdb_geoparquet.qmd`](proyectos/tema_01_duckdb_geoparquet/01_taller_duckdb_geoparquet.qmd) | Guía ejecutable paso a paso del bloque 2 |
 | [`references.bib`](proyectos/tema_01_duckdb_geoparquet/references.bib) | Literatura técnica y científica citada |
 
