@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DuckDB espacial y GeoParquet · Tema 01</title>
+<meta name="author" content="Jesús Enrique Flores Riera">
+<style>
+:root{
+  --bg:#070b1a; --bg2:#0e1530; --ink:#f4f6ff; --mute:#9aa5c9; --line:rgba(255,255,255,.10);
+  --pg:#3d9bff; --pg2:#0072B2; --dk:#ff8a1f; --dk2:#D55E00; --duck:#ffd23f;
+  --pink:#ff5fa2; --teal:#21d4b4; --vio:#8b6cff; --ok:#3ddc84; --no:#ff5a6a;
+  --g1:linear-gradient(135deg,#ff8a1f 0%,#ff5fa2 55%,#8b6cff 100%);
+  --g2:linear-gradient(135deg,#3d9bff 0%,#21d4b4 100%);
+  --g3:linear-gradient(135deg,#ffd23f 0%,#ff8a1f 100%);
+  --font:"Inter","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:"JetBrains Mono","Cascadia Code",Consolas,"SFMono-Regular",Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100vw;height:100vh;overflow:hidden;background:var(--bg);color:var(--ink);font-family:var(--font)}
+body{display:flex;align-items:center;justify-content:center}
+/* Fondo vivo */
+.bgfx{position:fixed;inset:0;overflow:hidden;z-index:0}
+.blob{position:absolute;border-radius:50%;filter:blur(90px);opacity:.35;animation:float 18s ease-in-out infinite alternate}
+.blob.b1{width:48vw;height:48vw;background:#ff8a1f;left:-12vw;top:-14vw}
+.blob.b2{width:40vw;height:40vw;background:#3d9bff;right:-10vw;bottom:-12vw;animation-delay:-6s}
+.blob.b3{width:30vw;height:30vw;background:#8b6cff;left:40vw;top:50vh;animation-delay:-11s;opacity:.22}
+@keyframes float{to{transform:translate(6vw,4vh) scale(1.15)}}
+.grain{position:fixed;inset:0;z-index:1;pointer-events:none;background-image:radial-gradient(rgba(255,255,255,.05) 1px,transparent 1px);background-size:26px 26px;mask-image:radial-gradient(ellipse at center,#000 30%,transparent 80%)}
+
+/* Escenario 16:9 escalado a la ventana */
+#stage{position:relative;z-index:2;width:1600px;height:900px;flex:none;transform-origin:center center}
+.slide{position:absolute;inset:0;padding:70px 96px;display:flex;flex-direction:column;justify-content:center;opacity:0;visibility:hidden;transition:opacity .6s ease,visibility .6s}
+.slide.active{opacity:1;visibility:visible}
+.kicker{font:600 18px/1 var(--mono);letter-spacing:.22em;text-transform:uppercase;color:var(--dk);margin-bottom:22px;display:flex;align-items:center;gap:14px}
+.kicker::before{content:"";width:46px;height:3px;border-radius:3px;background:var(--g1)}
+h1{font-size:96px;line-height:1.02;font-weight:800;letter-spacing:-.03em}
+h2{font-size:64px;line-height:1.06;font-weight:800;letter-spacing:-.025em;max-width:1250px}
+h3{font-size:28px;font-weight:700;letter-spacing:-.01em}
+p.lead{font-size:30px;line-height:1.35;color:var(--mute);max-width:1100px;margin-top:22px}
+.grad{background:var(--g1);-webkit-background-clip:text;background-clip:text;color:transparent}
+.grad2{background:var(--g2);-webkit-background-clip:text;background-clip:text;color:transparent}
+.grad3{background:var(--g3);-webkit-background-clip:text;background-clip:text;color:transparent}
+.pg{color:var(--pg)} .dk{color:var(--dk)} .mono{font-family:var(--mono)}
+.small{font-size:20px;color:var(--mute)}
+.row{display:flex;gap:28px}
+.col{display:flex;flex-direction:column;gap:22px}
+.mt{margin-top:46px}.mt2{margin-top:26px}
+
+/* Animaciones de entrada en cascada */
+.a{opacity:0}
+.slide.active .a{animation:rise .85s cubic-bezier(.2,.8,.2,1) forwards;animation-delay:calc(var(--d,0) * 110ms + 120ms)}
+.slide.active .a.l{animation-name:fromL}.slide.active .a.r{animation-name:fromR}.slide.active .a.z{animation-name:zoom}
+@keyframes rise{from{opacity:0;transform:translateY(38px)}to{opacity:1;transform:none}}
+@keyframes fromL{from{opacity:0;transform:translateX(-60px)}to{opacity:1;transform:none}}
+@keyframes fromR{from{opacity:0;transform:translateX(60px)}to{opacity:1;transform:none}}
+@keyframes zoom{from{opacity:0;transform:scale(.82)}to{opacity:1;transform:none}}
+
+/* Tarjetas Bento */
+.bento{display:grid;gap:22px}
+.card{position:relative;background:linear-gradient(160deg,rgba(255,255,255,.08),rgba(255,255,255,.025));border:1px solid var(--line);border-radius:28px;padding:30px 32px;overflow:hidden;transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;backdrop-filter:blur(6px)}
+.card::after{content:"";position:absolute;inset:-1px;border-radius:inherit;background:radial-gradient(600px circle at var(--mx,50%) var(--my,50%),rgba(255,255,255,.12),transparent 40%);opacity:0;transition:opacity .3s;pointer-events:none}
+.card:hover{transform:translateY(-8px) scale(1.015);box-shadow:0 30px 60px -20px rgba(0,0,0,.6),0 0 0 1px rgba(255,138,31,.35);border-color:rgba(255,138,31,.4)}
+.card:hover::after{opacity:1}
+.card .ico{width:62px;height:62px;border-radius:18px;display:grid;place-items:center;margin-bottom:18px;background:var(--g1)}
+.card .ico.b{background:var(--g2)}.card .ico.y{background:var(--g3)}
+.card .ico svg{width:34px;height:34px;stroke:#fff;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.card p{font-size:21px;line-height:1.4;color:var(--mute);margin-top:8px}
+.tag{display:inline-block;font:600 15px/1 var(--mono);padding:8px 12px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid var(--line);color:var(--ink)}
+
+/* Números y contadores */
+.big{font-size:150px;font-weight:800;line-height:.95;letter-spacing:-.04em}
+.mid{font-size:88px;font-weight:800;line-height:1;letter-spacing:-.03em}
+.unit{font-size:28px;color:var(--mute);font-weight:600;margin-top:10px}
+
+/* Barras horizontales */
+.hbar{display:grid;grid-template-columns:260px 1fr 150px;align-items:center;gap:22px;margin:16px 0}
+.hbar .lab{font-size:24px;font-weight:600;text-align:right}
+.hbar .track{height:46px;border-radius:14px;background:rgba(255,255,255,.06);overflow:hidden}
+.hbar .fill{height:100%;width:0;border-radius:14px;background:var(--g1);transition:width 1.6s cubic-bezier(.2,.8,.2,1)}
+.slide.active .hbar .fill{width:var(--w)}
+.hbar .val{font:700 30px/1 var(--mono)}
+
+/* Anillos y trazos SVG */
+.ring circle.prog{stroke-dasharray:100;stroke-dashoffset:100;transition:stroke-dashoffset 1.8s cubic-bezier(.2,.8,.2,1) .3s}
+.slide.active .ring circle.prog{stroke-dashoffset:calc(100 - var(--p))}
+.draw{stroke-dasharray:1;stroke-dashoffset:1}
+.slide.active .draw{animation:draw 2s cubic-bezier(.4,0,.2,1) forwards;animation-delay:calc(var(--d,0) * 150ms + 200ms)}
+@keyframes draw{to{stroke-dashoffset:0}}
+.bob{animation:bob 4s ease-in-out infinite}
+@keyframes bob{50%{transform:translateY(-12px)}}
+.spin{animation:spin 30s linear infinite;transform-origin:center;transform-box:fill-box}
+@keyframes spin{to{transform:rotate(360deg)}}
+.pulse{animation:pulse 2.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+
+/* Línea de tiempo */
+.timeline{position:relative;margin-top:70px;height:330px}
+.timeline .axis{position:absolute;left:0;right:0;top:150px;height:6px;border-radius:6px;background:rgba(255,255,255,.08);overflow:hidden}
+.timeline .axis i{display:block;height:100%;width:0;background:var(--g1);transition:width 2.4s cubic-bezier(.4,0,.2,1) .2s}
+.slide.active .timeline .axis i{width:100%}
+.tl{position:absolute;top:0;width:170px;margin-left:-85px;text-align:center}
+.tl .yr{font:800 34px/1 var(--font)}
+.tl .dot{width:26px;height:26px;border-radius:50%;margin:96px auto 0;background:var(--bg);border:6px solid var(--dk);box-shadow:0 0 0 8px rgba(255,138,31,.15);transition:transform .3s}
+.tl:hover .dot{transform:scale(1.4)}
+.tl .ev{font-size:19px;line-height:1.3;color:var(--mute);margin-top:22px}
+.tl.up .yr{color:var(--duck)}
+.tl.b .dot{border-color:var(--pg);box-shadow:0 0 0 8px rgba(61,155,255,.15)}
+
+/* Hoja de ruta */
+.road{position:relative;height:520px;margin-top:20px}
+.road svg{position:absolute;inset:0}
+.stop{position:absolute;width:230px;margin-left:-115px;text-align:center;cursor:pointer}
+.stop .n{width:86px;height:86px;border-radius:50%;margin:0 auto 14px;display:grid;place-items:center;font:800 34px/1 var(--font);background:var(--g1);box-shadow:0 14px 40px -10px rgba(255,138,31,.6);transition:transform .3s}
+.stop:nth-child(even) .n{background:var(--g2);box-shadow:0 14px 40px -10px rgba(61,155,255,.6)}
+.stop:hover .n{transform:scale(1.15) rotate(-6deg)}
+.stop .t{font-size:24px;font-weight:700}
+.stop .s{font-size:17px;color:var(--mute);margin-top:4px}
+
+/* Comparación */
+.vs{display:grid;grid-template-columns:1fr 90px 1fr;gap:0;align-items:stretch}
+.vs .mid-col{display:flex;align-items:center;justify-content:center;font:800 40px/1 var(--font);color:var(--mute)}
+.vs .rowx{display:flex;align-items:center;gap:16px;font-size:23px;padding:15px 0;border-bottom:1px dashed var(--line)}
+.vs .rowx b{min-width:30px;font-size:26px}
+.yes{color:var(--ok)}.nop{color:var(--no)}
+
+/* Matriz de experimentos */
+.mx{display:grid;grid-template-columns:120px 1.2fr 1.6fr;gap:14px}
+.mx div{padding:20px 22px;border-radius:18px;background:rgba(255,255,255,.05);border:1px solid var(--line);font-size:22px;transition:background .3s,transform .3s}
+.mx div:hover{background:rgba(255,138,31,.12);transform:translateX(6px)}
+.mx .h{background:none;border:none;font:700 16px/1 var(--mono);letter-spacing:.15em;text-transform:uppercase;color:var(--mute);padding:6px 22px}
+.mx .code{font:800 32px/1 var(--mono);display:grid;place-items:center;background:var(--g1);color:#fff;border:none}
+
+/* Código */
+pre.code{font:500 22px/1.55 var(--mono);background:rgba(0,0,0,.35);border:1px solid var(--line);border-radius:22px;padding:28px 32px;color:#dfe6ff;white-space:pre}
+.k{color:#ff8ac7}.f{color:#7fd6ff}.c{color:#7b86ad}.s{color:#ffd23f}
+
+/* Referencias */
+.refs{columns:2;column-gap:56px;font-size:17px;line-height:1.45;color:#c8cfea}
+.refs li{break-inside:avoid;margin:0 0 12px 22px}
+.refs i{color:#fff}
+
+/* Controles */
+.ui{position:fixed;z-index:5;display:flex;gap:10px;align-items:center}
+.ui.nav{right:24px;bottom:22px}
+.ui button{width:54px;height:54px;border-radius:16px;border:1px solid var(--line);background:rgba(255,255,255,.07);color:var(--ink);font-size:22px;cursor:pointer;transition:background .2s,transform .2s;backdrop-filter:blur(8px)}
+.ui button:hover{background:rgba(255,138,31,.25);transform:translateY(-2px)}
+.ui .count{font:600 16px/1 var(--mono);color:var(--mute);min-width:74px;text-align:center}
+.progress{position:fixed;left:0;top:0;height:5px;z-index:6;background:var(--g1);transition:width .6s cubic-bezier(.2,.8,.2,1)}
+.ui.help{left:24px;bottom:26px;font:500 14px/1.3 var(--mono);color:#6c779e}
+#notes{position:fixed;z-index:7;left:50%;bottom:90px;transform:translateX(-50%) translateY(20px);width:min(980px,92vw);max-height:40vh;overflow:auto;padding:24px 28px;border-radius:22px;background:rgba(10,14,32,.94);border:1px solid rgba(255,138,31,.35);font-size:18px;line-height:1.55;color:#dfe5ff;opacity:0;pointer-events:none;transition:opacity .3s,transform .3s}
+#notes.on{opacity:1;pointer-events:auto;transform:translateX(-50%)}
+#notes b{color:var(--dk);font:700 13px/1 var(--mono);letter-spacing:.15em;text-transform:uppercase;display:block;margin-bottom:10px}
+.notes{display:none}
+
+/* Parquet: grupos de filas */
+.rg{display:grid;grid-template-columns:repeat(8,1fr);gap:12px}
+.rg span{height:66px;border-radius:12px;background:var(--c,#3d9bff);opacity:.9;transition:opacity .6s,transform .6s,filter .6s;position:relative}
+.rg span.skip{opacity:.13;filter:grayscale(1);transform:scale(.92)}
+.rg span.hit{box-shadow:0 0 0 3px #fff,0 0 26px 4px rgba(255,210,63,.7)}
+.rg span.skip::after{content:"×";position:absolute;inset:0;display:grid;place-items:center;font:800 30px/1 var(--font);color:#fff;opacity:.7}
+
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-delay:0ms!important;transition-duration:.01ms!important}
+}
+</style>
+</head>
+<body>
+<div class="bgfx"><div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div></div>
+<div class="grain"></div>
+<div class="progress" id="progress"></div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <linearGradient id="gpg" x1="0" x2="1"><stop offset="0" stop-color="#3d9bff"/><stop offset="1" stop-color="#21d4b4"/></linearGradient>
+  <linearGradient id="gdk" x1="0" x2="1"><stop offset="0" stop-color="#ff8a1f"/><stop offset="1" stop-color="#ff5fa2"/></linearGradient>
+</defs></svg>
+<main id="stage">
+
+<!-- 1 · Portada -->
+<section class="slide" data-title="Portada">
+  <div class="row" style="align-items:center;justify-content:space-between">
+    <div style="max-width:900px">
+      <div class="kicker a">Tema 01 · Bases de datos espaciales</div>
+      <h1 class="a" style="--d:1">DuckDB espacial<br><span class="grad">y GeoParquet</span></h1>
+      <p class="lead a" style="--d:2">Analítica columnar, embebida y nativa de nube frente a PostGIS.</p>
+      <div class="row mt a" style="--d:3;gap:14px;flex-wrap:wrap">
+        <span class="tag">Jesús Enrique Flores Riera</span>
+        <span class="tag">Universidad Nacional de Colombia</span>
+        <span class="tag">Prof. Alexys Rodríguez Avellaneda</span>
+        <span class="tag">2026-2</span>
+      </div>
+    </div>
+    <svg class="a z bob" style="--d:2" width="520" height="520" viewBox="0 0 520 520" aria-hidden="true">
+      <defs>
+        <linearGradient id="gd" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffe066"/><stop offset="1" stop-color="#ffb020"/></linearGradient>
+        <linearGradient id="gw" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3d9bff"/><stop offset="1" stop-color="#21d4b4"/></linearGradient>
+      </defs>
+      <!-- bloques de un archivo Parquet como "agua" -->
+      <g opacity=".9">
+        <rect x="40" y="380" width="440" height="20" rx="10" fill="url(#gw)" opacity=".35"/>
+        <rect x="70" y="410" width="380" height="18" rx="9" fill="url(#gw)" opacity=".25"/>
+        <rect x="110" y="438" width="300" height="16" rx="8" fill="url(#gw)" opacity=".15"/>
+      </g>
+      <!-- pato estilizado original -->
+      <ellipse cx="250" cy="300" rx="150" ry="95" fill="url(#gd)"/>
+      <path d="M150 280 q-40 -10 -60 25 q35 5 70 -5z" fill="#ffb020"/>
+      <circle cx="330" cy="185" r="82" fill="url(#gd)"/>
+      <path d="M398 190 q60 0 70 22 q-40 22 -78 6z" fill="#ff8a1f"/>
+      <circle cx="345" cy="168" r="13" fill="#0b1020"/><circle cx="349" cy="164" r="4" fill="#fff"/>
+      <path d="M210 290 q40 40 100 10" stroke="#ff9f1a" stroke-width="10" fill="none" stroke-linecap="round"/>
+      <!-- columnas que flotan -->
+      <g class="pulse"><rect x="70" y="110" width="22" height="90" rx="6" fill="#ff5fa2"/><rect x="100" y="80" width="22" height="120" rx="6" fill="#8b6cff"/><rect x="130" y="130" width="22" height="70" rx="6" fill="#3d9bff"/></g>
+    </svg>
+  </div>
+  <aside class="notes">Presentar el objetivo: entender por qué un motor columnar embebido (DuckDB) que lee archivos columnares (GeoParquet) puede responder consultas analíticas espaciales más rápido que un servidor relacional indexado (PostGIS con GiST), y en qué casos no conviene. Duración del bloque: 30 minutos; luego 60 de taller y 15 de debate.</aside>
+</section>
+
+<!-- 2 · Hoja de ruta -->
+<section class="slide" data-title="Hoja de ruta">
+  <div class="kicker a">Hoja de ruta · 30 minutos</div>
+  <h2 class="a" style="--d:1">Ocho paradas, <span class="grad">del problema al taller.</span></h2>
+  <div class="road">
+    <svg viewBox="0 0 1408 520" preserveAspectRatio="none" aria-hidden="true">
+      <path class="draw" pathLength="1" d="M60 130 C 260 130, 260 390, 420 390 S 620 130, 760 130 S 940 390, 1080 390 S 1300 130, 1350 130" fill="none" stroke="url(#roadg)" stroke-width="8" stroke-linecap="round"/>
+      <defs><linearGradient id="roadg"><stop offset="0" stop-color="#ff8a1f"/><stop offset=".5" stop-color="#ff5fa2"/><stop offset="1" stop-color="#3d9bff"/></linearGradient></defs>
+    </svg>
+    <div class="stop a z" style="--d:2;left:4.3%;top:40px" data-go="2"><div class="n">1</div><div class="t">Problema</div><div class="s">OLTP frente a OLAP</div></div>
+    <div class="stop a z" style="--d:3;left:17.5%;top:300px" data-go="5"><div class="n">2</div><div class="t">Historia</div><div class="s">2005 → 2026</div></div>
+    <div class="stop a z" style="--d:4;left:30%;top:40px" data-go="8"><div class="n">3</div><div class="t">Cómo funciona</div><div class="s">Columnas y Parquet</div></div>
+    <div class="stop a z" style="--d:5;left:43%;top:300px" data-go="16"><div class="n">4</div><div class="t">Industria</div><div class="s">Overture y ecosistema</div></div>
+    <div class="stop a z" style="--d:6;left:56%;top:40px" data-go="17"><div class="n">5</div><div class="t">Mi caso</div><div class="s">Tesis de maestría</div></div>
+    <div class="stop a z" style="--d:7;left:69%;top:300px" data-go="18"><div class="n">6</div><div class="t">Decidir</div><div class="s">Cuándo sí, cuándo no</div></div>
+    <div class="stop a z" style="--d:8;left:82%;top:40px" data-go="20"><div class="n">7</div><div class="t">Experimento</div><div class="s">PostGIS vs DuckDB</div></div>
+    <div class="stop a z" style="--d:9;left:95.7%;top:300px" data-go="24"><div class="n">8</div><div class="t">Taller</div><div class="s">60 min en vivo</div></div>
+  </div>
+  <aside class="notes">Cada parada es clicable y lleva a su sección. El hilo narrativo: un problema real de rendimiento, de dónde salió la solución, cómo funciona por dentro, quién la usa, mi experiencia, criterios para decidir, cómo lo vamos a medir y el ejercicio práctico.</aside>
+</section>
+
+<!-- 3 · El problema -->
+<section class="slide" data-title="El problema">
+  <div class="kicker a">01 · El problema</div>
+  <h2 class="a" style="--d:1">Para sumar dos columnas, <span class="pg">PostGIS</span> lee <span class="grad">la fila entera.</span></h2>
+  <div class="row mt" style="gap:70px;align-items:flex-start">
+    <div class="col a l" style="--d:2;flex:1">
+      <h3 class="pg">Almacenamiento por filas</h3>
+      <svg viewBox="0 0 600 300" width="600" height="300" aria-label="Por filas se leen todas las celdas">
+        <g id="rowsGrid"></g>
+      </svg>
+      <div class="small">Se leen 6 de 6 columnas</div>
+    </div>
+    <div class="col a r" style="--d:3;flex:1">
+      <h3 class="dk">Almacenamiento por columnas</h3>
+      <svg viewBox="0 0 600 300" width="600" height="300" aria-label="Por columnas se leen solo dos columnas">
+        <g id="colsGrid"></g>
+      </svg>
+      <div class="small">Se leen 2 de 6 columnas</div>
+    </div>
+  </div>
+  <aside class="notes">PostgreSQL/PostGIS es un motor OLTP orientado a filas: cada página del heap guarda tuplas completas. Excelente para transacciones e integridad. En analítica (agregar millones de filas leyendo pocas columnas) desperdicia E/S. En un almacén columnar, cada columna está contigua y comprimida: se lee solo lo que la consulta usa (C-Store, Stonebraker et al., 2005).</aside>
+</section>
+
+<!-- 4 · Tres costos -->
+<section class="slide" data-title="Tres costos">
+  <div class="kicker a">01 · El cuello de botella</div>
+  <h2 class="a" style="--d:1">Tres costos que <span class="grad">no aportan</span> a una consulta analítica.</h2>
+  <div class="bento mt" style="grid-template-columns:repeat(3,1fr)">
+    <div class="card a" style="--d:2">
+      <div class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg></div>
+      <h3>Filas completas</h3><p>Lee todas las columnas aunque use dos.</p>
+    </div>
+    <div class="card a" style="--d:3">
+      <div class="ico y"><svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="18" cy="12" r="2"/></svg></div>
+      <h3>Tupla a tupla</h3><p>Un registro por llamada: poca caché de CPU.</p>
+    </div>
+    <div class="card a" style="--d:4">
+      <div class="ico b"><svg viewBox="0 0 24 24"><path d="M4 12h6M14 12h6"/><circle cx="12" cy="12" r="2"/><path d="M7 8l-3 4 3 4M17 8l3 4-3 4"/></svg></div>
+      <h3>Socket TCP</h3><p>Todo resultado se serializa y cruza la red.</p>
+    </div>
+  </div>
+  <p class="lead a" style="--d:5;font-size:24px">El protocolo cliente-servidor puede dominar el tiempo total del análisis (Raasveldt y Mühleisen, 2017).</p>
+  <aside class="notes">1) E/S desperdiciada por leer tuplas completas. 2) Modelo iterador de Volcano: cada operador pide una tupla a la vez, mucho costo de llamadas y poca localidad de caché. 3) Transferencia: sockets TCP, llamadas al sistema y serialización binaria. El artículo "Don't Hold My Data Hostage" (PVLDB 2017) midió que transferir resultados puede ser el cuello de botella; es el antecedente directo de DuckDB.</aside>
+</section>
+
+<!-- 5 · Cliente-servidor vs in-process -->
+<section class="slide" data-title="Arquitecturas">
+  <div class="kicker a">01 · Arquitectura</div>
+  <h2 class="a" style="--d:1">DuckDB <span class="grad">elimina el socket:</span> vive dentro de tu proceso.</h2>
+  <svg class="a z mt2" style="--d:2" viewBox="0 0 1400 520" width="1400" height="520" aria-label="Comparación cliente-servidor e in-process">
+    <!-- Cliente-servidor -->
+    <text x="0" y="30" fill="#3d9bff" font-size="26" font-weight="700">Cliente-servidor · PostgreSQL/PostGIS</text>
+    <rect x="0" y="60" width="260" height="150" rx="24" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.2)"/>
+    <text x="130" y="128" fill="#fff" font-size="24" text-anchor="middle" font-weight="700">Python</text>
+    <text x="130" y="162" fill="#9aa5c9" font-size="18" text-anchor="middle">cliente</text>
+    <path id="sock" d="M270 135 H 820" stroke="#3d9bff" stroke-width="6" stroke-dasharray="14 12" fill="none"/>
+    <text x="545" y="112" fill="#9aa5c9" font-size="19" text-anchor="middle">SQL → · ← filas serializadas (TCP)</text>
+    <circle r="11" fill="#3d9bff"><animateMotion dur="2.4s" repeatCount="indefinite" path="M270 135 H 820"/></circle>
+    <circle r="11" fill="#21d4b4"><animateMotion dur="2.4s" begin="1.2s" repeatCount="indefinite" path="M820 135 H 270"/></circle>
+    <rect x="830" y="60" width="260" height="150" rx="24" fill="rgba(61,155,255,.15)" stroke="#3d9bff"/>
+    <text x="960" y="128" fill="#fff" font-size="24" text-anchor="middle" font-weight="700">Servidor</text>
+    <text x="960" y="162" fill="#9aa5c9" font-size="18" text-anchor="middle">postgres</text>
+    <path d="M1100 135 H 1170" stroke="#3d9bff" stroke-width="5"/>
+    <g transform="translate(1180,70)"><ellipse cx="90" cy="18" rx="90" ry="18" fill="#3d9bff"/><rect x="0" y="18" width="180" height="96" fill="#2a7fe0"/><ellipse cx="90" cy="114" rx="90" ry="18" fill="#1f6cc4"/><text x="90" y="80" fill="#fff" font-size="18" text-anchor="middle">heap + GiST</text></g>
+    <!-- In-process -->
+    <text x="0" y="300" fill="#ff8a1f" font-size="26" font-weight="700">In-process · DuckDB</text>
+    <rect x="0" y="330" width="1090" height="170" rx="28" fill="rgba(255,138,31,.10)" stroke="#ff8a1f"/>
+    <text x="40" y="378" fill="#9aa5c9" font-size="18">un solo proceso</text>
+    <rect x="40" y="395" width="300" height="80" rx="18" fill="rgba(255,255,255,.08)"/><text x="190" y="443" fill="#fff" font-size="22" text-anchor="middle" font-weight="700">Python</text>
+    <path d="M340 435 H 470" stroke="#ff8a1f" stroke-width="8"/>
+    <rect x="470" y="395" width="320" height="80" rx="18" fill="url(#gdk)"/><text x="630" y="443" fill="#fff" font-size="22" text-anchor="middle" font-weight="800">DuckDB (biblioteca)</text>
+    <path d="M790 435 H 1170" stroke="#ff5fa2" stroke-width="6" stroke-dasharray="4 10"/>
+    <circle r="10" fill="#ffd23f"><animateMotion dur="1.4s" repeatCount="indefinite" path="M1170 435 H 790"/></circle>
+    <g transform="translate(1180,375)"><rect width="180" height="120" rx="16" fill="rgba(255,210,63,.18)" stroke="#ffd23f"/><rect x="18" y="20" width="30" height="80" rx="5" fill="#ff8a1f"/><rect x="58" y="20" width="30" height="80" rx="5" fill="#ff5fa2"/><rect x="98" y="20" width="30" height="80" rx="5" fill="#8b6cff"/><rect x="138" y="20" width="24" height="80" rx="5" fill="#3d9bff"/></g>
+    <text x="1270" y="520" fill="#ffd23f" font-size="18" text-anchor="middle">GeoParquet · local o S3</text>
+  </svg>
+  <aside class="notes">Arriba: el script envía SQL por TCP al proceso servidor, que lee tablas heap e índice GiST y devuelve filas serializadas. Abajo: DuckDB es una biblioteca enlazada dentro del proceso de Python, R, Julia o el navegador (WASM). Lee archivos Parquet locales o remotos (HTTP/S3) y entrega el resultado como estructura en memoria (Arrow/pandas) sin red.</aside>
+</section>
+
+<!-- 6 · Raíces académicas -->
+<section class="slide" data-title="Raíces">
+  <div class="kicker a">02 · Historia</div>
+  <h2 class="a" style="--d:1">Dos décadas de investigación <span class="grad">antes del pato.</span></h2>
+  <div class="timeline">
+    <div class="axis"><i></i></div>
+    <div class="tl a b" style="--d:2;left:8%"><div class="yr pg">2005</div><div class="dot"></div><div class="ev">C-Store: guardar por columnas</div></div>
+    <div class="tl a b" style="--d:3;left:28%"><div class="yr pg">2005</div><div class="dot"></div><div class="ev">MonetDB/X100 (CWI): ejecución vectorizada</div></div>
+    <div class="tl a b" style="--d:4;left:48%"><div class="yr pg">2010</div><div class="dot"></div><div class="ev">Dremel (Google): columnas anidadas</div></div>
+    <div class="tl a" style="--d:5;left:68%"><div class="yr dk">2013</div><div class="dot"></div><div class="ev">Nace Apache Parquet</div></div>
+    <div class="tl a up" style="--d:6;left:90%"><div class="yr">2017</div><div class="dot"></div><div class="ev">"Don't hold my data hostage"</div></div>
+  </div>
+  <aside class="notes">El hilo conductor: el grupo Database Architectures del CWI (Ámsterdam), que creó MonetDB y la ejecución vectorizada X100, es el mismo donde nace DuckDB. Dremel (Melnik et al., 2010) inspiró el formato Parquet (2013). En 2017 Raasveldt y Mühleisen publican el estudio del protocolo cliente-servidor: si el cuello de botella es el socket, se elimina el socket.</aside>
+</section>
+
+<!-- 7 · Línea DuckDB / GeoParquet -->
+<section class="slide" data-title="Línea de tiempo">
+  <div class="kicker a">02 · Historia</div>
+  <h2 class="a" style="--d:1">De experimento académico <span class="grad">a estándar de la industria.</span></h2>
+  <div class="timeline">
+    <div class="axis"><i></i></div>
+    <div class="tl a" style="--d:2;left:5%"><div class="yr dk">2018</div><div class="dot"></div><div class="ev">Raasveldt y Mühleisen inician DuckDB en el CWI</div></div>
+    <div class="tl a" style="--d:3;left:18%"><div class="yr dk">2019</div><div class="dot"></div><div class="ev">v0.1 en SIGMOD</div></div>
+    <div class="tl a" style="--d:4;left:31%"><div class="yr dk">2021</div><div class="dot"></div><div class="ev">Nace DuckDB Labs</div></div>
+    <div class="tl a b" style="--d:5;left:44%"><div class="yr pg">2023</div><div class="dot"></div><div class="ev">Extensión spatial y GeoParquet 1.0</div></div>
+    <div class="tl a b" style="--d:6;left:57%"><div class="yr pg">2024</div><div class="dot"></div><div class="ev">DuckDB 1.0 y GeoParquet 1.1 (bbox)</div></div>
+    <div class="tl a b" style="--d:7;left:70%"><div class="yr pg">2025</div><div class="dot"></div><div class="ev">Parquet adopta GEOMETRY nativo</div></div>
+    <div class="tl a up" style="--d:8;left:83%"><div class="yr">2026</div><div class="dot"></div><div class="ev">v1.5: GEOMETRY en el núcleo</div></div>
+    <div class="tl a up" style="--d:9;left:96%"><div class="yr">Oct 2026</div><div class="dot"></div><div class="ev">DuckDB 2.0 LTS</div></div>
+  </div>
+  <aside class="notes">Fechas: DuckDB comienza en 2018 en el CWI; v0.1 se presenta en SIGMOD 2019; DuckDB Labs se funda en 2021; la extensión spatial sale en abril de 2023 y GeoParquet 1.0.0 en septiembre de 2023; DuckDB 1.0.0 el 3 de junio de 2024; GeoParquet 1.1 agrega la columna de cobertura bbox; en 2025 Parquet e Iceberg adoptan los tipos GEOMETRY y GEOGRAPHY; en marzo de 2026 DuckDB 1.5 vuelve GEOMETRY un tipo del núcleo; el 21 de octubre de 2026 sale DuckDB 2.0.0 LTS. El equipo recomienda esperar la 2.0.1 para producción, por eso el proyecto fija 1.5.6.</aside>
+</section>
+
+<!-- 8 · Adopción -->
+<section class="slide" data-title="Adopción">
+  <div class="kicker a">02 · Adopción</div>
+  <h2 class="a" style="--d:1">Una biblioteca pequeña con <span class="grad">adopción masiva.</span></h2>
+  <div class="bento mt" style="grid-template-columns:1.4fr 1fr 1fr">
+    <div class="card a" style="--d:2">
+      <div class="big grad"><span data-count="625">0</span> M</div>
+      <div class="unit">descargas de los paquetes de Python</div>
+    </div>
+    <div class="card a" style="--d:3">
+      <div class="mid grad2">~<span data-count="40">0</span> M</div>
+      <div class="unit">descargas al mes en 2026</div>
+    </div>
+    <div class="card a" style="--d:4">
+      <div class="mid grad3"><span data-count="8">0</span> años</div>
+      <div class="unit">de 2018 a la versión 2.0</div>
+    </div>
+  </div>
+  <aside class="notes">Según reportes de 2026, los paquetes de Python de DuckDB superan 625 millones de descargas, con unos 40 millones al mes. El crecimiento viene de su facilidad: pip install duckdb y ya se puede consultar Parquet, CSV o una base PostgreSQL sin instalar un servidor.</aside>
+</section>
+
+<!-- 9 · DuckDB bento -->
+<section class="slide" data-title="DuckDB">
+  <div class="kicker a">03 · Características</div>
+  <h2 class="a" style="--d:1">DuckDB: <span class="grad">un motor OLAP</span> que cabe en un import.</h2>
+  <div class="bento mt" style="grid-template-columns:repeat(4,1fr);grid-template-rows:auto auto">
+    <div class="card a" style="--d:2;grid-column:span 2">
+      <div class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8 12h8M12 8v8"/></svg></div>
+      <h3>In-process</h3><p>Sin servidor, sin administración, sin red.</p>
+    </div>
+    <div class="card a" style="--d:3">
+      <div class="ico y"><svg viewBox="0 0 24 24"><path d="M6 4v16M12 4v16M18 4v16"/></svg></div>
+      <h3>Columnar</h3><p>Columnas comprimidas.</p>
+    </div>
+    <div class="card a" style="--d:4">
+      <div class="ico b"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></div>
+      <h3>Vectorizado</h3><p>Lotes de valores por operador.</p>
+    </div>
+    <div class="card a" style="--d:5">
+      <div class="ico b"><svg viewBox="0 0 24 24"><path d="M5 19V9M10 19V5M15 19v-7M20 19V8"/></svg></div>
+      <h3>Paralelo</h3><p>Usa todos los núcleos.</p>
+    </div>
+    <div class="card a" style="--d:6">
+      <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg></div>
+      <h3>ACID</h3><p>Transacciones con MVCC.</p>
+    </div>
+    <div class="card a" style="--d:7;grid-column:span 2">
+      <div class="ico y"><svg viewBox="0 0 24 24"><path d="M14 3h7v7M10 14L21 3M21 14v7H3V3h7"/></svg></div>
+      <h3>Extensiones</h3><p><span class="mono">spatial</span> · <span class="mono">httpfs</span> (S3) · <span class="mono">postgres</span> · desborde a disco.</p>
+    </div>
+  </div>
+  <aside class="notes">Características clave: se ejecuta dentro del proceso; almacena y procesa por columnas; ejecución vectorizada (vectores de valores, por defecto 2048) que aprovecha la caché de la CPU; paralelismo automático; transacciones ACID con MVCC; lee CSV, JSON, Parquet, Excel y bases PostgreSQL con ATTACH; extensiones spatial (funciones ST_ y GDAL), httpfs (HTTP y S3) y postgres; cuando supera memory_limit desborda a disco (spilling).</aside>
+</section>
+
+<!-- 10 · Vectorizado -->
+<section class="slide" data-title="Vectorizado">
+  <div class="kicker a">03 · Ejecución vectorizada</div>
+  <h2 class="a" style="--d:1">Procesar <span class="grad">vectores de valores</span>, no tuplas sueltas.</h2>
+  <div class="row mt" style="gap:60px">
+    <div class="card a l" style="--d:2;flex:1">
+      <h3 class="pg">Tupla a tupla</h3>
+      <svg viewBox="0 0 560 200" width="100%" height="200" aria-hidden="true">
+        <g id="tupleAnim"></g>
+      </svg>
+      <p>Una llamada por registro.</p>
+    </div>
+    <div class="card a r" style="--d:3;flex:1">
+      <h3 class="dk">Vectorizado</h3>
+      <svg viewBox="0 0 560 200" width="100%" height="200" aria-hidden="true">
+        <g id="vecAnim"></g>
+      </svg>
+      <p>Una llamada por lote de <b class="dk"><span data-count="2048">0</span></b> valores.</p>
+    </div>
+  </div>
+  <aside class="notes">Heredado de MonetDB/X100 (Boncz et al., 2005). En el modelo iterador clásico cada operador llama a su hijo para obtener una tupla: millones de llamadas virtuales. DuckDB pasa vectores (por defecto 2048 valores) entre operadores: menos sobrecarga de llamadas, bucles ajustados que el compilador optimiza y datos que caben en la caché L1/L2.</aside>
+</section>
+
+<!-- 11 · Parquet -->
+<section class="slide" data-title="Parquet">
+  <div class="kicker a">03 · Anatomía de Parquet</div>
+  <h2 class="a" style="--d:1">Un archivo partido en <span class="grad">grupos de filas</span> con estadísticas.</h2>
+  <svg class="a z mt2" style="--d:2" viewBox="0 0 1400 500" width="1400" height="500" aria-label="Estructura de un archivo Parquet">
+    <rect x="0" y="0" width="1400" height="500" rx="30" fill="rgba(255,255,255,.04)" stroke="rgba(255,255,255,.12)"/>
+    <g id="pqGroups"></g>
+    <rect x="1080" y="40" width="290" height="420" rx="22" fill="rgba(255,210,63,.12)" stroke="#ffd23f" stroke-width="2"/>
+    <text x="1225" y="92" fill="#ffd23f" font-size="26" font-weight="800" text-anchor="middle">Pie (footer)</text>
+    <text x="1225" y="150" fill="#fff" font-size="20" text-anchor="middle">esquema</text>
+    <text x="1225" y="200" fill="#fff" font-size="20" text-anchor="middle">min / max por columna</text>
+    <text x="1225" y="250" fill="#fff" font-size="20" text-anchor="middle">y por grupo</text>
+    <text x="1225" y="320" fill="#ff8a1f" font-size="22" text-anchor="middle" font-weight="700">metadatos "geo"</text>
+    <text x="1225" y="360" fill="#9aa5c9" font-size="18" text-anchor="middle">CRS · WKB · tipos</text>
+  </svg>
+  <aside class="notes">Parquet divide el archivo en grupos de filas (row groups); dentro de cada grupo, cada columna es un fragmento contiguo, codificado (diccionario, RLE) y comprimido (ZSTD, Snappy). El pie guarda el esquema y estadísticas mínimas y máximas por columna y por grupo. Con eso el lector puede leer solo las columnas pedidas y saltarse grupos completos. En este proyecto usamos grupos de 100 000 filas.</aside>
+</section>
+
+<!-- 12 · GeoParquet evolución -->
+<section class="slide" data-title="GeoParquet">
+  <div class="kicker a">03 · GeoParquet</div>
+  <h2 class="a" style="--d:1">Geometrías dentro de Parquet, <span class="grad">en tres versiones.</span></h2>
+  <div class="row mt" style="gap:26px;align-items:stretch">
+    <div class="card a" style="--d:2;flex:1">
+      <div class="tag">2023</div>
+      <div class="mid grad2 mt2">1.0</div>
+      <p>WKB en columnas binarias más metadatos <span class="mono">geo</span>.</p>
+    </div>
+    <svg class="a" style="--d:3" width="70" height="300" viewBox="0 0 70 300"><path class="draw" pathLength="1" d="M5 150 H 60 M45 135 L62 150 L45 165" stroke="#ff8a1f" stroke-width="5" fill="none" stroke-linecap="round"/></svg>
+    <div class="card a" style="--d:4;flex:1;border-color:rgba(255,138,31,.5)">
+      <div class="tag">2024 · producción</div>
+      <div class="mid grad mt2">1.1</div>
+      <p>Columna <span class="mono">bbox</span>: filtrar por caja sin decodificar.</p>
+    </div>
+    <svg class="a" style="--d:5" width="70" height="300" viewBox="0 0 70 300"><path class="draw" pathLength="1" d="M5 150 H 60 M45 135 L62 150 L45 165" stroke="#ff8a1f" stroke-width="5" fill="none" stroke-linecap="round"/></svg>
+    <div class="card a" style="--d:6;flex:1">
+      <div class="tag">2025-2026</div>
+      <div class="mid grad3 mt2">2.0</div>
+      <p>Tipos nativos <span class="mono">GEOMETRY</span> y <span class="mono">GEOGRAPHY</span>.</p>
+    </div>
+  </div>
+  <aside class="notes">1.0: geometrías en WKB dentro de BYTE_ARRAY y una clave "geo" con versión, columna primaria, codificación, CRS y tipos. 1.1: columna de cobertura bbox (xmin, ymin, xmax, ymax) cuyas estadísticas por grupo permiten filtrar espacialmente; codificación GeoArrow opcional. 2.0 / tipos nativos: Parquet e Iceberg incorporan GEOMETRY y GEOGRAPHY con estadísticas espaciales. La comunidad recomienda seguir usando 1.1 en producción mientras el ecosistema adopta los tipos nativos.</aside>
+</section>
+
+<!-- 13 · Empuje de predicados -->
+<section class="slide" data-title="Empuje de predicados">
+  <div class="kicker a">03 · Empuje de predicados</div>
+  <h2 class="a" style="--d:1">Si el <span class="mono">bbox</span> no toca la ventana, <span class="grad">el grupo no se lee.</span></h2>
+  <div class="row mt" style="gap:60px">
+    <div class="col a l" style="--d:2;flex:1">
+      <h3 class="ok" style="color:var(--ok)">Ordenado por Hilbert</h3>
+      <div class="rg" id="rgSorted"></div>
+      <div class="small">Resaltados: leídos · <span class="mono">×</span> descartados sin descargar</div>
+    </div>
+    <div class="col a r" style="--d:3;flex:1">
+      <h3 style="color:var(--no)">Desordenado</h3>
+      <div class="rg" id="rgRandom"></div>
+      <div class="small">Cada grupo cubre toda la ciudad: no se descarta nada</div>
+    </div>
+  </div>
+  <p class="small a" style="--d:4;margin-top:24px">Ilustración conceptual: el efecto real se mide en el experimento E1.</p>
+  <aside class="notes">El filtro WHERE bbox.xmin &lt;= x1 AND bbox.xmax &gt;= x0 AND ... se evalúa contra los mínimos y máximos del pie de cada grupo de filas. Si el rango no interseca la ventana, el grupo completo se salta: en S3 significa descargar pocos MB en vez del archivo entero. Pero solo sirve si los datos están ordenados espacialmente; si están en orden aleatorio, cada grupo cubre toda la ciudad y la fracción de grupos leídos tiende a 1. Esto se mide con las variantes ddb_bbox frente a ddb_bbox_desordenado.</aside>
+</section>
+
+<!-- 14 · Hilbert -->
+<section class="slide" data-title="Curva de Hilbert">
+  <div class="kicker a">03 · Orden espacial</div>
+  <div class="row" style="align-items:center;gap:80px">
+    <div style="flex:1">
+      <h2 class="a" style="--d:1">La curva de Hilbert <span class="grad">mantiene juntos</span> a los vecinos.</h2>
+      <p class="lead a" style="--d:2">Puntos cercanos en el mapa quedan cercanos en el archivo.</p>
+      <pre class="code a mt" style="--d:3"><span class="k">COPY</span> (<span class="k">SELECT</span> * <span class="k">FROM</span> edificios
+  <span class="k">ORDER BY</span> <span class="f">ST_Hilbert</span>(geom, caja))
+<span class="k">TO</span> <span class="s">'edificios.parquet'</span>
+  (<span class="k">FORMAT</span> PARQUET, ROW_GROUP_SIZE <span class="s">100000</span>);</pre>
+    </div>
+    <svg class="a z" style="--d:2" width="560" height="560" viewBox="-4 -4 520 520" aria-label="Curva de Hilbert">
+      <defs><linearGradient id="hil" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff8a1f"/><stop offset=".5" stop-color="#ff5fa2"/><stop offset="1" stop-color="#3d9bff"/></linearGradient></defs>
+      <path id="hilbertPath" class="draw" pathLength="1" fill="none" stroke="url(#hil)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </div>
+  <aside class="notes">La curva de Hilbert recorre el plano visitando cada celda una vez, y conserva la localidad: celdas consecutivas en la curva son vecinas en el espacio. Ordenar por ST_Hilbert antes de escribir el GeoParquet hace que cada grupo de filas cubra una región compacta, lo que estrecha los rangos min/max de bbox y vuelve efectivo el empuje de predicados.</aside>
+</section>
+
+<!-- 15 · Cruce espacial -->
+<section class="slide" data-title="Cruce espacial">
+  <div class="kicker a">03 · Cruces espaciales</div>
+  <h2 class="a" style="--d:1">58 millones de viajes contra 310 barrios: <span class="grad">de 30 minutos a 30 segundos.</span></h2>
+  <div class="row mt" style="gap:60px;align-items:center">
+    <div style="flex:1.6">
+      <div class="hbar a" style="--d:2"><div class="lab">Sin optimizar</div><div class="track"><div class="fill" style="--w:100%;background:linear-gradient(90deg,#ff5a6a,#ff5fa2)"></div></div><div class="val">~<span data-count="1800">0</span> s</div></div>
+      <div class="hbar a" style="--d:3"><div class="lab">DuckDB 1.2</div><div class="track"><div class="fill" style="--w:5.94%"></div></div><div class="val"><span data-count="107">0</span> s</div></div>
+      <div class="hbar a" style="--d:4"><div class="lab">DuckDB 1.3</div><div class="track"><div class="fill" style="--w:1.67%;background:var(--g2)"></div></div><div class="val">~<span data-count="30">0</span> s</div></div>
+      <p class="small a" style="--d:5;margin-top:18px">Operador <span class="mono">SPATIAL_JOIN</span>: un R-tree temporal en memoria.</p>
+    </div>
+    <div class="bento a" style="--d:3;flex:1;grid-template-columns:1fr">
+      <div class="card"><div class="mid grad" style="font-size:62px"><span data-count="58033724">0</span></div><div class="unit">viajes de Citi Bike</div></div>
+      <div class="card"><div class="mid grad2">~<span data-count="18">0</span> mil M</div><div class="unit">evaluaciones de ST_Intersects</div></div>
+    </div>
+  </div>
+  <aside class="notes">Benchmark publicado por el equipo de DuckDB (Max Gabrielsson): 58 033 724 viajes de Citi Bike contra 310 barrios de Nueva York, unos 18 mil millones de evaluaciones de ST_Intersects. Sin optimizar tomaba alrededor de 30 minutos; con DuckDB 1.2, 107 segundos; con el operador SPATIAL_JOIN de DuckDB 1.3, unos 30 segundos. Ojo: son cifras de su benchmark, no del nuestro.</aside>
+</section>
+
+<!-- 16 · PostGIS vs DuckDB -->
+<section class="slide" data-title="PostGIS vs DuckDB">
+  <div class="kicker a">03 · Comparación</div>
+  <h2 class="a" style="--d:1"><span class="pg">PostGIS</span> y <span class="dk">DuckDB</span> resuelven problemas distintos.</h2>
+  <div class="vs mt">
+    <div class="a l" style="--d:2">
+      <div class="rowx"><b class="pg">◆</b>OLTP y cargas mixtas</div>
+      <div class="rowx"><b class="pg">◆</b>Filas (heap) + TOAST</div>
+      <div class="rowx"><b class="pg">◆</b>Servidor multiusuario</div>
+      <div class="rowx"><b class="pg">◆</b>Índices GiST, SP-GiST, BRIN</div>
+      <div class="rowx"><b class="pg">◆</b>Muchos escritores concurrentes</div>
+      <div class="rowx"><b class="pg">◆</b>Más de 20 años: topología, ráster</div>
+    </div>
+    <div class="mid-col a z" style="--d:3">vs</div>
+    <div class="a r" style="--d:4">
+      <div class="rowx"><b class="dk">◆</b>OLAP analítico</div>
+      <div class="rowx"><b class="dk">◆</b>Columnas comprimidas</div>
+      <div class="rowx"><b class="dk">◆</b>Biblioteca en el proceso</div>
+      <div class="rowx"><b class="dk">◆</b>R-tree en tablas; min/max en Parquet</div>
+      <div class="rowx"><b class="dk">◆</b>Un solo proceso escritor</div>
+      <div class="rowx"><b class="dk">◆</b>Lee directo de la nube (S3, HTTP)</div>
+    </div>
+  </div>
+  <aside class="notes">Comparación arquitectónica, no de rendimiento. PostGIS: motor transaccional maduro, multiusuario, con restricciones, permisos, topología persistente, pgRouting y ráster. DuckDB: motor analítico embebido; R-tree desde 1.1 solo en tablas persistidas; sobre Parquet la poda depende de estadísticas; un solo proceso puede escribir su archivo nativo; lee datos remotos sin ingestión previa.</aside>
+</section>
+
+<!-- 17 · Industria -->
+<section class="slide" data-title="Industria">
+  <div class="kicker a">04 · Aplicaciones en la industria</div>
+  <h2 class="a" style="--d:1">El mapa abierto del planeta <span class="grad">se distribuye en GeoParquet.</span></h2>
+  <div class="row mt" style="align-items:center;gap:40px">
+    <svg class="a z" style="--d:2" width="620" height="560" viewBox="0 0 620 560" aria-label="Ecosistema de GeoParquet">
+      <circle cx="310" cy="280" r="230" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="2"/>
+      <circle cx="310" cy="280" r="150" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="2"/>
+      <g class="spin"><circle cx="310" cy="50" r="7" fill="#ff8a1f"/><circle cx="540" cy="280" r="7" fill="#3d9bff"/><circle cx="80" cy="280" r="7" fill="#ff5fa2"/><circle cx="310" cy="510" r="7" fill="#21d4b4"/></g>
+      <circle cx="310" cy="280" r="86" fill="url(#gdk)"/>
+      <text x="310" y="273" fill="#fff" font-size="24" font-weight="800" text-anchor="middle">GeoParquet</text>
+      <text x="310" y="303" fill="#fff" font-size="17" text-anchor="middle">+ DuckDB</text>
+      <g font-size="19" font-weight="700" text-anchor="middle" fill="#fff">
+        <text x="310" y="115">GDAL 3.8+</text><text x="470" y="200">GeoPandas</text><text x="470" y="375">QGIS</text>
+        <text x="310" y="455">Apache Sedona</text><text x="150" y="375">CARTO</text><text x="150" y="200">DuckDB-WASM</text>
+        <text x="310" y="40" fill="#ffd23f">GeoLibre</text><text x="560" y="290" fill="#7fd6ff">STAC</text><text x="60" y="290" fill="#ff8ac7">Iceberg</text>
+      </g>
+    </svg>
+    <div class="col" style="flex:1">
+      <div class="card a r" style="--d:3"><h3 class="dk">Overture Maps Foundation</h3><p>Amazon, Meta, Microsoft y TomTom publican edificaciones, vías y lugares en S3.</p></div>
+      <div class="card a r" style="--d:4"><h3 class="pg">Consulta sin descarga total</h3><p>Su documentación usa DuckDB para bajar solo lo necesario.</p></div>
+      <div class="card a r" style="--d:5"><h3 style="color:var(--teal)">Mismo patrón</h3><p>Source Cooperative, Google Open Buildings, Planetary Computer.</p></div>
+    </div>
+  </div>
+  <aside class="notes">Overture Maps Foundation, fundada por Amazon, Meta, Microsoft y TomTom, distribuye sus temas (edificaciones, vías, lugares, límites) como GeoParquet en S3 y Azure; su guía oficial usa DuckDB con httpfs. El mismo patrón aparece en Source Cooperative, Google Open Buildings y las colecciones STAC en GeoParquet de Planetary Computer. GDAL lee y escribe GeoParquet desde 3.8; GeoPandas, QGIS, Apache Sedona, Iceberg y CARTO lo consumen. DuckDB-WASM ejecuta SQL espacial en el navegador; GeoLibre lo usa para abrir GeoParquet y PMTiles sin servidor.</aside>
+</section>
+
+<!-- 18 · Caso propio -->
+<section class="slide" data-title="Mi caso">
+  <div class="kicker a">05 · Caso propio · tesis de maestría</div>
+  <h2 class="a" style="--d:1">Monitoreo de enfermedades del maíz: <span class="grad">PostGIS registra, DuckDB analiza.</span></h2>
+  <svg class="a z mt2" style="--d:2" viewBox="0 0 1400 330" width="1400" height="330" aria-label="Arquitectura de la tesis">
+    <g font-weight="700" text-anchor="middle">
+      <rect x="0" y="110" width="200" height="110" rx="24" fill="rgba(255,255,255,.07)" stroke="rgba(255,255,255,.2)"/><text x="100" y="160" fill="#fff" font-size="22">App Flutter</text><text x="100" y="192" fill="#9aa5c9" font-size="16" font-weight="400">captura en campo</text>
+      <path class="draw" pathLength="1" style="--d:1" d="M205 165 H 290" stroke="#fff" stroke-width="5"/>
+      <rect x="295" y="110" width="200" height="110" rx="24" fill="rgba(255,255,255,.07)" stroke="rgba(255,255,255,.2)"/><text x="395" y="160" fill="#fff" font-size="22">API FastAPI</text><text x="395" y="192" fill="#9aa5c9" font-size="16" font-weight="400">validación</text>
+      <path class="draw" pathLength="1" style="--d:2" d="M500 165 H 585" stroke="#3d9bff" stroke-width="5"/>
+      <rect x="590" y="90" width="250" height="150" rx="26" fill="rgba(61,155,255,.16)" stroke="#3d9bff" stroke-width="2"/><text x="715" y="155" fill="#fff" font-size="26">PostGIS</text><text x="715" y="190" fill="#9aa5c9" font-size="16" font-weight="400">lotes · observaciones</text>
+      <path class="draw" pathLength="1" style="--d:3" d="M845 165 H 930" stroke="#ff8a1f" stroke-width="5"/>
+      <rect x="935" y="90" width="230" height="150" rx="26" fill="url(#gdk)"/><text x="1050" y="155" fill="#fff" font-size="26">DuckDB</text><text x="1050" y="190" fill="#fff" font-size="16" font-weight="400">ATTACH postgres</text>
+      <path class="draw" pathLength="1" style="--d:4" d="M1170 165 H 1235" stroke="#ffd23f" stroke-width="5"/>
+      <rect x="1240" y="110" width="160" height="110" rx="24" fill="rgba(255,210,63,.15)" stroke="#ffd23f"/><text x="1320" y="160" fill="#ffd23f" font-size="20">GeoParquet</text><text x="1320" y="192" fill="#9aa5c9" font-size="16" font-weight="400">exportación</text>
+    </g>
+    <text x="1050" y="290" fill="#ffd23f" font-size="20" font-weight="700" text-anchor="middle">7 de octubre de 2026 · commit c45ae22</text>
+  </svg>
+  <div class="row mt2" style="gap:24px">
+    <div class="card a" style="--d:4;flex:1"><h3 class="nop">Lección 1</h3><p>SQL armado con f-strings: riesgo de inyección.</p></div>
+    <div class="card a" style="--d:5;flex:1"><h3 class="nop">Lección 2</h3><p>Verificar que el archivo traiga metadatos <span class="mono">geo</span>.</p></div>
+    <div class="card a" style="--d:6;flex:1"><h3 class="yes">Corrección</h3><p>Parámetros enlazados y auditoría en el taller.</p></div>
+  </div>
+  <aside class="notes">El patrón se implementó primero en la plataforma de la tesis: app móvil Flutter, API FastAPI y PostGIS como sistema de registro. El 7 de octubre de 2026 se añadió un servicio que adjunta PostGIS a una conexión DuckDB en memoria, cruza estadísticas zonales con lotes y exporta GeoParquet. El código original está en antecedentes/ con su fecha real. Dos lecciones que este proyecto corrige: consultas con f-strings (inyección SQL) y no verificar los metadatos geo.</aside>
+</section>
+
+<!-- 19 · Cuándo sí / no -->
+<section class="slide" data-title="Decidir">
+  <div class="kicker a">06 · ¿Para qué y cuándo?</div>
+  <h2 class="a" style="--d:1">No es reemplazo: <span class="grad">son complementarios.</span></h2>
+  <div class="row mt" style="gap:30px">
+    <div class="card a l" style="--d:2;flex:1;border-color:rgba(61,220,132,.4)">
+      <h3 class="yes">DuckDB + GeoParquet</h3>
+      <div class="vs" style="display:block">
+        <div class="rowx"><b class="yes">✓</b>Millones de registros, pocas columnas</div>
+        <div class="rowx"><b class="yes">✓</b>Solo lectura o cargas por lotes</div>
+        <div class="rowx"><b class="yes">✓</b>Datos ya en la nube</div>
+        <div class="rowx"><b class="yes">✓</b>Reproducible sin infraestructura</div>
+      </div>
+    </div>
+    <div class="card a r" style="--d:3;flex:1;border-color:rgba(61,155,255,.4)">
+      <h3 class="pg">PostGIS</h3>
+      <div class="vs" style="display:block">
+        <div class="rowx"><b class="pg">✓</b>Muchos escritores concurrentes</div>
+        <div class="rowx"><b class="pg">✓</b>Integridad, disparadores y permisos</div>
+        <div class="rowx"><b class="pg">✓</b>Topología, pgRouting y ráster</div>
+        <div class="rowx"><b class="pg">✓</b>QGIS y ArcGIS conectados en vivo</div>
+      </div>
+    </div>
+  </div>
+  <aside class="notes">Arquitectura recomendada: PostGIS como sistema de registro transaccional y DuckDB/GeoParquet como capa analítica y de distribución. Consultas puntuales muy selectivas y frecuentes con índice caliente pueden seguir siendo mejores en PostGIS; lo comprobamos con la ventana del 1 %.</aside>
+</section>
+
+<!-- 20 · Limitaciones -->
+<section class="slide" data-title="Limitaciones">
+  <div class="kicker a">06 · Limitaciones</div>
+  <h2 class="a" style="--d:1">Lo que DuckDB <span class="grad">todavía no resuelve.</span></h2>
+  <div class="bento mt" style="grid-template-columns:repeat(3,1fr)">
+    <div class="card a" style="--d:2"><div class="ico"><svg viewBox="0 0 24 24"><path d="M12 4v16M4 12h16"/></svg></div><h3>Un escritor</h3><p>Un solo proceso escribe; los demás solo leen.</p></div>
+    <div class="card a" style="--d:3"><div class="ico y"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9h6v6H9z"/></svg></div><h3>R-tree limitado</h3><p>Solo filtros con argumento constante.</p></div>
+    <div class="card a" style="--d:4"><div class="ico b"><svg viewBox="0 0 24 24"><path d="M5 5l14 14M19 5L5 19"/></svg></div><h3>Sin índice interno</h3><p>GeoParquet depende del orden físico.</p></div>
+    <div class="card a" style="--d:5"><div class="ico"><svg viewBox="0 0 24 24"><path d="M4 18h16M6 14l4-6 4 4 4-8"/></svg></div><h3>Memoria</h3><p>Geometrías complejas: desborde o error.</p></div>
+    <div class="card a" style="--d:6"><div class="ico y"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 8-8M4 4v5h5"/></svg></div><h3>Transición</h3><p>GeoParquet 1.1 frente a tipos nativos 2.0.</p></div>
+    <div class="card a" style="--d:7"><div class="ico b"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="8"/></svg></div><h3>Madurez</h3><p>Sin topología persistente ni ráster.</p></div>
+  </div>
+  <aside class="notes">1) Concurrencia: un solo proceso puede escribir el archivo nativo; varios procesos solo en modo lectura. 2) El índice R-tree acelera solo filtros WHERE con argumento constante en planificación y no libera sus búferes mientras exista. 3) Los archivos GeoParquet no tienen índice: la poda depende del orden y tamaño de grupos. 4) Al superar memory_limit con geometrías complejas hay desborde a disco o error. 5) Ecosistema en transición. 6) DuckDB 2.0 cambia el formato de archivo; spatial cubre menos que PostGIS.</aside>
+</section>
+
+<!-- 21 · Preguntas e hipótesis -->
+<section class="slide" data-title="Preguntas">
+  <div class="kicker a">07 · Diseño experimental</div>
+  <h2 class="a" style="--d:1">Dos preguntas, <span class="grad">tres hipótesis.</span></h2>
+  <div class="row mt" style="gap:26px">
+    <div class="card a" style="--d:2;flex:1"><div class="tag">P1</div><h3 class="mt2">¿Cuánto acelera el empuje de predicados frente a GiST?</h3></div>
+    <div class="card a" style="--d:3;flex:1"><div class="tag">P2</div><h3 class="mt2">¿Cuánto volumen cabe en memoria antes de degradarse?</h3></div>
+  </div>
+  <div class="row mt2" style="gap:26px">
+    <div class="card a" style="--d:4;flex:1"><div class="mid grad" style="font-size:56px">H1</div><p>GiST gana en ventanas pequeñas; DuckDB en grandes.</p></div>
+    <div class="card a" style="--d:5;flex:1"><div class="mid grad2" style="font-size:56px">H2</div><p>El bbox solo sirve con archivo ordenado.</p></div>
+    <div class="card a" style="--d:6;flex:1"><div class="mid grad3" style="font-size:56px">H3</div><p>Menos memoria degrada el cruce hasta fallar.</p></div>
+  </div>
+  <aside class="notes">P1: ¿en qué magnitud reducen el formato columnar y el empuje de predicados los tiempos de filtrado espacial frente a un escaneo indexado en PostGIS? P2: ¿cuál es el límite de volumen de geometrías complejas que DuckDB procesa en memoria antes de degradarse por paginación a disco? H1: en ventanas del 1 % GiST compite o gana; en ventanas del 50 % y agregaciones gana DuckDB. H2: el filtro bbox solo aporta si el archivo está ordenado espacialmente. H3: reducir memory_limit por debajo del conjunto de trabajo del cruce aumenta la latencia hasta producir errores.</aside>
+</section>
+
+<!-- 22 · Datos y entorno -->
+<section class="slide" data-title="Datos y entorno">
+  <div class="kicker a">07 · Datos y entorno</div>
+  <h2 class="a" style="--d:1">Mismos datos, misma CPU y RAM: <span class="grad">comparación justa.</span></h2>
+  <div class="bento mt" style="grid-template-columns:1.3fr 1fr 1fr 1fr">
+    <div class="card a" style="--d:2;grid-row:span 2">
+      <div class="ico"><svg viewBox="0 0 24 24"><path d="M3 21h18M5 21V9l4-3v15M13 21V4l6 4v13"/></svg></div>
+      <h3>Edificaciones de Bogotá</h3><p>Overture Maps, leídas directo de S3.</p>
+      <svg viewBox="0 0 300 180" width="100%" height="180" aria-hidden="true"><g id="cityGrid"></g></svg>
+    </div>
+    <div class="card a" style="--d:3"><div class="mid grad" style="font-size:60px"><span data-count="500">0</span> m</div><div class="unit">celdas de la grilla</div></div>
+    <div class="card a" style="--d:4"><div class="mid grad2" style="font-size:52px"><span data-count="100000">0</span></div><div class="unit">filas por grupo</div></div>
+    <div class="card a" style="--d:5"><div class="mid grad3" style="font-size:60px"><span data-count="10">0</span> M</div><div class="unit">sintéticos (1, 5, 10)</div></div>
+    <div class="card a" style="--d:6"><h3 class="pg">PostGIS 17</h3><p>imagen 17-3.5 en Docker</p></div>
+    <div class="card a" style="--d:7"><h3 class="dk">DuckDB 1.5.6</h3><p>Python 3.12 en Docker</p></div>
+    <div class="card a" style="--d:8"><h3 style="color:var(--teal)">Mismo presupuesto</h3><p>CPU y RAM idénticas</p></div>
+  </div>
+  <aside class="notes">Datos abiertos: huellas de edificaciones de Overture Maps dentro de la zona urbana de Bogotá (rectángulo -74.23 a -73.99, 4.47 a 4.84). Grilla de celdas de 0.0045 grados (~500 m). Conjuntos sintéticos con semilla fija de 1, 5 y 10 millones para la pregunta 2. Archivos GeoParquet con grupos de 100 000 filas y ZSTD, uno ordenado por Hilbert y otro desordenado. Los mismos registros se cargan en PostGIS vía WKB con GiST y VACUUM ANALYZE. Ambos contenedores con la misma CPU y RAM.</aside>
+</section>
+
+<!-- 23 · Experimentos -->
+<section class="slide" data-title="Experimentos">
+  <div class="kicker a">07 · Matriz experimental</div>
+  <h2 class="a" style="--d:1">Cuatro experimentos, <span class="grad">cinco repeticiones cada uno.</span></h2>
+  <div class="mx mt">
+    <div class="h a" style="--d:2">Código</div><div class="h a" style="--d:2">Consulta</div><div class="h a" style="--d:2">Variantes</div>
+    <div class="code a l" style="--d:3">E0</div><div class="a" style="--d:3">SELECT 1</div><div class="a" style="--d:3">Línea base del proceso DuckDB</div>
+    <div class="code a l" style="--d:4">E1</div><div class="a" style="--d:4">Ventanas 1 %, 10 %, 50 %</div><div class="a" style="--d:4">GiST · secuencial · bbox · sin bbox · desordenado</div>
+    <div class="code a l" style="--d:5">E2</div><div class="a" style="--d:5">Agregación por clase</div><div class="a" style="--d:5">PostGIS frente a DuckDB</div>
+    <div class="code a l" style="--d:6">E3</div><div class="a" style="--d:6">Edificios × grilla</div><div class="a" style="--d:6">GiST · DuckDB con 256 MB a 2 GB</div>
+  </div>
+  <div class="row mt2 a" style="--d:7;gap:12px;flex-wrap:wrap">
+    <span class="tag">latencia</span><span class="tag">CPU</span><span class="tag">pico de RAM</span><span class="tag">bytes leídos</span><span class="tag">EXPLAIN ANALYZE BUFFERS</span><span class="tag">docker stats</span><span class="tag">mediana e IQR</span><span class="tag">mismo resultado verificado</span>
+  </div>
+  <aside class="notes">Cada variante: 1 calentamiento y 5 repeticiones; se reportan mediana y rango intercuartílico. DuckDB corre cada consulta en un subproceso nuevo para medir pico de RSS (ru_maxrss), CPU y lecturas (/proc/self/io); se resta la línea base E0. PostGIS: latencia de extremo a extremo desde el cliente y EXPLAIN (ANALYZE, BUFFERS) para tiempo de servidor y bloques shared hit/read. docker stats muestrea RAM y CPU de ambos contenedores. Se verifica que todas las variantes devuelvan el mismo resultado.</aside>
+</section>
+
+<!-- 24 · Resultados -->
+<section class="slide" data-title="Resultados">
+  <div class="kicker a">07 · Resultados</div>
+  <h2 class="a" style="--d:1;font-size:56px">Las cifras salen <span class="grad">solo de nuestras mediciones.</span></h2>
+  <div class="row mt" style="gap:40px;align-items:center">
+    <svg class="ring a z" style="--d:2" width="360" height="360" viewBox="0 0 120 120" aria-label="Progreso del benchmark">
+      <circle cx="60" cy="60" r="50" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="12"/>
+      <circle class="prog" pathLength="100" style="--p:75" cx="60" cy="60" r="50" fill="none" stroke="url(#gdk)" stroke-width="12" stroke-linecap="round" transform="rotate(-90 60 60)"/>
+      <text x="60" y="58" fill="#fff" font-size="15" font-weight="800" text-anchor="middle">3 de 4</text>
+      <text x="60" y="76" fill="#9aa5c9" font-size="8" text-anchor="middle">etapas listas</text>
+    </svg>
+    <div class="col" style="flex:1">
+      <div class="card a r" style="padding:18px 26px;--d:3"><h3 class="yes">✓ Entorno, datos y scripts</h3><p>Docker, GeoParquet y benchmark listos.</p></div>
+      <div class="card a r" style="padding:18px 26px;--d:4"><h3 class="yes">✓ Métricas definidas</h3><p>Latencia, CPU, RAM, E/S y planes.</p></div>
+      <div class="card a r" style="padding:18px 26px;--d:5"><h3 class="yes">✓ Verificación de resultados</h3><p>Ambos motores deben coincidir.</p></div>
+      <div class="card a r" style="padding:18px 26px;--d:6;border-color:rgba(255,210,63,.5)"><h3 style="color:var(--duck)">◷ Resultados pendientes de medición</h3><p>Se publican desde <span class="mono">resultados/resumen.csv</span>.</p></div>
+    </div>
+  </div>
+  <aside class="notes">Esta diapositiva se actualiza cuando se ejecute el benchmark: los valores y figuras saldrán de resultados/resumen.csv y resultados/figuras. No se reporta ninguna cifra que no haya sido medida; la política del curso sanciona falsificar métricas.</aside>
+</section>
+
+<!-- 25 · Taller -->
+<section class="slide" data-title="Taller">
+  <div class="kicker a">08 · Ejercicio práctico</div>
+  <h2 class="a" style="--d:1">Sesenta minutos <span class="grad">con las manos en el teclado.</span></h2>
+  <div class="row mt" style="gap:70px;align-items:center">
+    <svg class="a z" style="--d:2" width="420" height="420" viewBox="0 0 120 120" aria-label="Agenda del taller">
+      <g id="donut" transform="rotate(-90 60 60)"></g>
+      <text x="60" y="58" fill="#fff" font-size="20" font-weight="800" text-anchor="middle"><tspan data-count="60">0</tspan></text>
+      <text x="60" y="74" fill="#9aa5c9" font-size="8" text-anchor="middle">minutos</text>
+    </svg>
+    <div class="col" style="flex:1;gap:14px" id="tallerList"></div>
+  </div>
+  <aside class="notes">0-10: levantar Docker y verificar contenedores. 10-20: DuckDB consulta Overture en S3 para la Ciudad Universitaria. 20-30: esquema, metadatos geo y estadísticas por grupo de filas. 30-40: la misma ventana en PostGIS con EXPLAIN (ANALYZE, BUFFERS), con y sin índice. 40-50: empuje de predicados con y sin bbox, archivo ordenado y desordenado. 50-60: cruce espacial con memory_limit y exportación parametrizada a GeoParquet, abierta en QGIS o GeoLibre.</aside>
+</section>
+
+<!-- 26 · Debate -->
+<section class="slide" data-title="Debate">
+  <div class="kicker a">Debate · 15 minutos</div>
+  <h2 class="a" style="--d:1">Preguntas para <span class="grad">pensar juntos.</span></h2>
+  <div class="bento mt" style="grid-template-columns:repeat(2,1fr)">
+    <div class="card a" style="--d:2"><div class="mid grad" style="font-size:54px">?</div><h3>¿Ganancia del formato o del socket?</h3></div>
+    <div class="card a" style="--d:3"><div class="mid grad2" style="font-size:54px">?</div><h3>¿Es justa la comparación con caché caliente?</h3></div>
+    <div class="card a" style="--d:4"><div class="mid grad3" style="font-size:54px">?</div><h3>¿Y si los datos se editan a diario?</h3></div>
+    <div class="card a" style="--d:5"><div class="mid grad" style="font-size:54px">?</div><h3>¿Cómo encaja en una geodatabase corporativa?</h3></div>
+  </div>
+  <aside class="notes">Usar E0 y los tiempos de servidor de EXPLAIN ANALYZE para separar el efecto del formato columnar del efecto de eliminar el socket. PostgreSQL mantiene páginas en shared_buffers entre repeticiones; cada subproceso DuckDB arranca vacío pero comparte la caché del sistema operativo. Si los datos se editan constantemente, reescribir Parquet es costoso: PostGIS sigue siendo el sistema de registro.</aside>
+</section>
+
+<!-- 27 · Cierre -->
+<section class="slide" data-title="Cierre">
+  <div class="row" style="align-items:center;gap:80px">
+    <div style="flex:1">
+      <div class="kicker a">Mensaje final</div>
+      <h1 class="a" style="--d:1;font-size:84px"><span class="pg">PostGIS</span> registra.<br><span class="dk">DuckDB</span> analiza.<br><span class="grad">GeoParquet</span> distribuye.</h1>
+      <div class="row mt a" style="--d:3;gap:12px;flex-wrap:wrap">
+        <span class="tag">github.com/jf-floresriera/Proyecto_Bases_de_datos_espaciales</span>
+      </div>
+    </div>
+    <svg class="a z bob" style="--d:2" width="420" height="420" viewBox="0 0 420 420" aria-hidden="true">
+      <circle cx="210" cy="210" r="190" fill="none" stroke="url(#gpg)" stroke-width="10" class="draw" pathLength="1"/>
+      <circle cx="210" cy="210" r="150" fill="none" stroke="url(#gdk)" stroke-width="10" class="draw" pathLength="1" style="--d:2"/>
+      <circle cx="210" cy="210" r="110" fill="none" stroke="#ffd23f" stroke-width="10" class="draw" pathLength="1" style="--d:4"/>
+      <text x="210" y="225" fill="#fff" font-size="44" font-weight="800" text-anchor="middle">¡Gracias!</text>
+    </svg>
+  </div>
+  <aside class="notes">Cierre: no hay un ganador absoluto; hay una arquitectura. PostGIS como sistema de registro transaccional, DuckDB como motor analítico embebido y GeoParquet como formato abierto de intercambio y distribución en la nube.</aside>
+</section>
+
+<!-- 28 · Referencias -->
+<section class="slide" data-title="Referencias">
+  <div class="kicker a">Referencias</div>
+  <ol class="refs a" style="--d:1">
+    <li>Boncz, P., Zukowski, M. y Nes, N. (2005). MonetDB/X100: Hyper-pipelining query execution. <i>CIDR</i>.</li>
+    <li>Cloud-Native Geospatial Forum (2023). <i>GeoParquet 1.0.0 released</i>.</li>
+    <li>Cloud-Native Geospatial Forum (2025). <i>GeoParquet 2.0: Going native</i>.</li>
+    <li>DuckDB Team (2023). <i>PostGEESE? Introducing the DuckDB spatial extension</i>.</li>
+    <li>DuckDB Team (2025). <i>Announcing DuckDB 1.4.0 LTS</i>.</li>
+    <li>DuckDB Team (2026). <i>Announcing DuckDB 1.5.0</i> y <i>Announcing DuckDB 2.0.0 LTS</i>.</li>
+    <li>DuckDB Team. <i>R-tree indexes</i> y <i>Handling concurrency</i> (documentación).</li>
+    <li>Guttman, A. (1984). R-trees: A dynamic index structure for spatial searching. <i>ACM SIGMOD</i>, 47-57.</li>
+    <li>Hellerstein, J. M., Naughton, J. F. y Pfeffer, A. (1995). Generalized search trees for database systems. <i>VLDB</i>, 562-573.</li>
+    <li>Melnik, S. et al. (2010). Dremel: Interactive analysis of web-scale datasets. <i>PVLDB</i>, 3(1), 330-339.</li>
+    <li>Open Geospatial Consortium (2024). <i>GeoParquet specification 1.1.0</i>.</li>
+    <li>Apache Parquet (2026). <i>Native geospatial types in Apache Parquet</i>.</li>
+    <li>Overture Maps Foundation. <i>Getting data: DuckDB</i> (documentación).</li>
+    <li>Raasveldt, M. y Mühleisen, H. (2017). Don't hold my data hostage. <i>PVLDB</i>, 10(10), 1022-1033.</li>
+    <li>Raasveldt, M. y Mühleisen, H. (2019). DuckDB: An embeddable analytical database. <i>ACM SIGMOD</i>, 1981-1984.</li>
+    <li>Stonebraker, M. et al. (2005). C-Store: A column-oriented DBMS. <i>VLDB</i>, 553-564.</li>
+    <li>Willison, S. (2025). <i>Spatial joins in DuckDB</i> (sobre el artículo de M. Gabrielsson).</li>
+    <li>Wu, Q. (2026). <i>GeoLibre: A lightweight, cloud-native GIS platform</i>. Zenodo.</li>
+  </ol>
+  <aside class="notes">Referencias completas con DOI y URL en references.bib del repositorio.</aside>
+</section>
+
+</main>
+
+<aside id="notes"><b>Notas del expositor · tecla N</b><div id="notesText"></div></aside>
+<div class="ui help">← → rueda · N notas · F pantalla completa</div>
+<nav class="ui nav">
+  <button id="prev" aria-label="Anterior">‹</button>
+  <span class="count" id="count">1 / 1</span>
+  <button id="next" aria-label="Siguiente">›</button>
+  <button id="fs" aria-label="Pantalla completa">⤢</button>
+</nav>
+
+<script>
+(() => {
+  const slides = [...document.querySelectorAll('.slide')];
+  const stage = document.getElementById('stage');
+  let cur = 0, lock = false;
+
+  /* Escalar el escenario 1600x900 a la ventana */
+  const fit = () => {
+    const s = Math.min(innerWidth / 1600, innerHeight / 900);
+    stage.style.transform = `scale(${s})`;
+  };
+  addEventListener('resize', fit); fit();
+
+  /* Contadores que suben desde 0 */
+  const fmt = n => Math.round(n).toLocaleString('es-CO');
+  const runCounters = slide => slide.querySelectorAll('[data-count]').forEach(el => {
+    const end = +el.dataset.count, dur = 1600, t0 = performance.now() + 250;
+    el.textContent = '0';
+    const tick = t => {
+      const k = Math.min(Math.max((t - t0) / dur, 0), 1);
+      el.textContent = fmt(end * (1 - Math.pow(1 - k, 3)));
+      if (k < 1 && slide.classList.contains('active')) requestAnimationFrame(tick);
+      else if (k >= 1) el.textContent = fmt(end);
+    };
+    requestAnimationFrame(tick);
+  });
+
+  /* Grupos de filas: ordenado frente a desordenado */
+  const pal = ['#ff8a1f','#ff5fa2','#8b6cff','#3d9bff','#21d4b4','#ffd23f','#ff5a6a','#7fd6ff'];
+  const rgSorted = document.getElementById('rgSorted'), rgRandom = document.getElementById('rgRandom');
+  for (let i = 0; i < 32; i++) {
+    const a = document.createElement('span'); a.style.setProperty('--c', pal[Math.floor(i / 4)]); rgSorted.appendChild(a);
+    const b = document.createElement('span'); b.style.background = `linear-gradient(135deg,${pal[i%8]},${pal[(i*3+2)%8]},${pal[(i*5+1)%8]})`; rgRandom.appendChild(b);
+  }
+  const animateRG = () => {
+    const hit = new Set([12,13,14,15]);
+    [...rgSorted.children].forEach((s,i) => { s.className=''; setTimeout(()=> s.className = hit.has(i) ? 'hit' : 'skip', 900 + i*45); });
+    [...rgRandom.children].forEach((s,i) => { s.className=''; setTimeout(()=> s.className = 'hit', 900 + i*45); });
+  };
+
+  /* Filas frente a columnas */
+  const NS = 'http://www.w3.org/2000/svg';
+  const mk = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent && parent.appendChild(e); return e; };
+  const buildGrid = (id, mode) => {
+    const g = document.getElementById(id);
+    for (let r = 0; r < 6; r++) for (let c = 0; c < 6; c++) {
+      const lit = mode === 'rows' ? true : (c === 1 || c === 4);
+      const rect = mk('rect', {x: 10 + c*96, y: 10 + r*46, width: 86, height: 36, rx: 8,
+        fill: lit ? (mode === 'rows' ? '#3d9bff' : '#ff8a1f') : 'rgba(255,255,255,.07)', opacity: 0}, g);
+      rect.dataset.delay = mode === 'rows' ? (r*6 + c) * 55 : (c*6 + r) * 55;
+      rect.dataset.lit = lit ? 1 : 0;
+    }
+  };
+  buildGrid('rowsGrid','rows'); buildGrid('colsGrid','cols');
+  const animateGrids = () => document.querySelectorAll('#rowsGrid rect, #colsGrid rect').forEach(r => {
+    r.style.transition = 'none'; r.setAttribute('opacity', 0);
+    setTimeout(() => { r.style.transition = 'opacity .4s'; r.setAttribute('opacity', r.dataset.lit === '1' ? .95 : .5); }, 500 + +r.dataset.delay);
+  });
+
+  /* Tupla a tupla frente a vectorizado */
+  const tup = document.getElementById('tupleAnim'), vec = document.getElementById('vecAnim');
+  for (let i = 0; i < 10; i++) {
+    const c = mk('rect', {x: 20, y: 80, width: 30, height: 40, rx: 6, fill: '#3d9bff'}, tup);
+    mk('animate', {attributeName: 'x', values: '20;510', dur: '5s', begin: `${i*0.5}s`, repeatCount: 'indefinite'}, c);
+  }
+  const v = mk('g', {}, vec);
+  for (let i = 0; i < 10; i++) mk('rect', {x: i*34, y: 80, width: 30, height: 40, rx: 6, fill: ['#ff8a1f','#ff5fa2','#8b6cff'][i%3]}, v);
+  mk('animateTransform', {attributeName: 'transform', type: 'translate', values: '-340 0; 560 0', dur: '1.6s', repeatCount: 'indefinite'}, v);
+
+  /* Archivo Parquet */
+  const pq = document.getElementById('pqGroups');
+  const cols = ['id','clase','altura','geom (WKB)','bbox'];
+  const cc = ['#3d9bff','#21d4b4','#8b6cff','#ff8a1f','#ffd23f'];
+  for (let gI = 0; gI < 3; gI++) {
+    const y = 40 + gI * 145;
+    mk('rect', {x: 30, y, width: 1020, height: 125, rx: 20, fill: 'rgba(255,255,255,.05)', stroke: 'rgba(255,255,255,.15)'}, pq);
+    mk('text', {x: 52, y: y + 36, fill: '#9aa5c9', 'font-size': 18, 'font-weight': 700}, pq).textContent = `Grupo de filas ${gI + 1}`;
+    cols.forEach((name, i) => {
+      const r = mk('rect', {x: 52 + i*196, y: y + 52, width: 180, height: 54, rx: 12, fill: cc[i], opacity: .85}, pq);
+      mk('animate', {attributeName: 'opacity', values: '.55;.95;.55', dur: `${3 + i*.4}s`, repeatCount: 'indefinite'}, r);
+      const t = mk('text', {x: 142 + i*196, y: y + 86, fill: '#0b1020', 'font-size': 19, 'font-weight': 800, 'text-anchor': 'middle'}, pq);
+      t.textContent = name;
+    });
+  }
+
+  /* Curva de Hilbert (orden 4) */
+  const hilbert = (n, d) => { let rx, ry, t = d, x = 0, y = 0;
+    for (let s = 1; s < n; s *= 2) { rx = 1 & (t / 2); ry = 1 & (t ^ rx);
+      if (ry === 0) { if (rx === 1) { x = s - 1 - x; y = s - 1 - y; } [x, y] = [y, x]; }
+      x += s * rx; y += s * ry; t = Math.floor(t / 4); }
+    return [x, y]; };
+  const N = 16, step = 512 / N; let d = '';
+  for (let i = 0; i < N*N; i++) { const [x, y] = hilbert(N, i); d += (i ? 'L' : 'M') + (x*step + step/2) + ' ' + (y*step + step/2); }
+  document.getElementById('hilbertPath').setAttribute('d', d);
+
+  /* Ciudad (grilla de edificaciones) */
+  const city = document.getElementById('cityGrid');
+  for (let i = 0; i < 90; i++) {
+    const x = (i % 15) * 20 + 4, h = 18 + ((i * 37) % 60);
+    mk('rect', {x, y: 170 - h - Math.floor(i/15)*4, width: 14, height: h, rx: 3, fill: pal[i % 5], opacity: .25 + ((i*13)%60)/100}, city);
+  }
+  mk('path', {d: 'M0 172 H300', stroke: 'rgba(255,255,255,.2)', 'stroke-width': 2}, city);
+
+  /* Taller: anillo segmentado y lista */
+  const pasos = [
+    ['0-10','Levantar el entorno','#3d9bff'], ['10-20','Overture directo desde S3','#21d4b4'],
+    ['20-30','Anatomía del GeoParquet','#8b6cff'], ['30-40','PostGIS con EXPLAIN','#ff5fa2'],
+    ['40-50','Empuje de predicados','#ff8a1f'], ['50-60','Cruce, memoria y exportación','#ffd23f']];
+  const donut = document.getElementById('donut'), list = document.getElementById('tallerList');
+  pasos.forEach(([t, txt, col], i) => {
+    const c = mk('circle', {cx: 60, cy: 60, r: 46, fill: 'none', stroke: col, 'stroke-width': 14, pathLength: 100,
+      'stroke-dasharray': '0 100', 'stroke-dashoffset': -(i * 100/6)}, donut);
+    c.dataset.i = i;
+    const row = document.createElement('div');
+    row.className = 'card a r'; row.style.cssText = `--d:${i+2};padding:16px 24px;display:flex;align-items:center;gap:22px`;
+    row.innerHTML = `<span class="mono" style="font-size:22px;font-weight:800;color:${col};min-width:90px">${t}</span><span style="font-size:23px;font-weight:600">${txt}</span>`;
+    list.appendChild(row);
+  });
+  const animateDonut = () => donut.querySelectorAll('circle').forEach(c => {
+    c.style.transition = 'none'; c.setAttribute('stroke-dasharray', '0 100');
+    setTimeout(() => { c.style.transition = 'stroke-dasharray .7s ease'; c.setAttribute('stroke-dasharray', `${100/6 - 1.2} 100`); }, 400 + c.dataset.i * 260);
+  });
+
+  /* Brillo que sigue al cursor en las tarjetas */
+  document.addEventListener('pointermove', e => {
+    const card = e.target.closest && e.target.closest('.card'); if (!card) return;
+    const r = card.getBoundingClientRect();
+    card.style.setProperty('--mx', `${(e.clientX - r.left) / r.width * 100}%`);
+    card.style.setProperty('--my', `${(e.clientY - r.top) / r.height * 100}%`);
+  });
+
+  /* Navegación */
+  const notesBox = document.getElementById('notes'), notesText = document.getElementById('notesText');
+  const show = i => {
+    i = Math.max(0, Math.min(slides.length - 1, i));
+    slides[cur].classList.remove('active');
+    void slides[i].offsetWidth;
+    slides[i].classList.add('active'); cur = i;
+    document.getElementById('count').textContent = `${i + 1} / ${slides.length}`;
+    document.getElementById('progress').style.width = `${(i + 1) / slides.length * 100}%`;
+    const n = slides[i].querySelector('.notes'); notesText.textContent = n ? n.textContent : '';
+    runCounters(slides[i]);
+    if (slides[i].contains(rgSorted)) animateRG();
+    if (slides[i].querySelector('#rowsGrid')) animateGrids();
+    if (slides[i].contains(donut)) animateDonut();
+    try { history.replaceState(null, '', `#s${i + 1}`); } catch (e) {}
+  };
+  const go = delta => { if (lock) return; lock = true; show(cur + delta); setTimeout(() => lock = false, 650); };
+  document.getElementById('next').onclick = () => go(1);
+  document.getElementById('prev').onclick = () => go(-1);
+  document.getElementById('fs').onclick = () => { try { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen(); } catch (e) {} };
+  document.querySelectorAll('[data-go]').forEach(el => el.onclick = () => show(+el.dataset.go));
+  addEventListener('keydown', e => {
+    if (['ArrowRight','ArrowDown','PageDown',' ','Enter'].includes(e.key)) { e.preventDefault(); go(1); }
+    else if (['ArrowLeft','ArrowUp','PageUp','Backspace'].includes(e.key)) { e.preventDefault(); go(-1); }
+    else if (e.key === 'Home') show(0);
+    else if (e.key === 'End') show(slides.length - 1);
+    else if (e.key.toLowerCase() === 'n') notesBox.classList.toggle('on');
+    else if (e.key.toLowerCase() === 'f') document.getElementById('fs').click();
+  });
+  let wheelAcc = 0;
+  addEventListener('wheel', e => { e.preventDefault(); wheelAcc += e.deltaY;
+    if (Math.abs(wheelAcc) > 60) { go(wheelAcc > 0 ? 1 : -1); wheelAcc = 0; } }, {passive: false});
+  let tx = null;
+  addEventListener('touchstart', e => tx = e.touches[0].clientX, {passive: true});
+  addEventListener('touchend', e => { if (tx === null) return; const dx = e.changedTouches[0].clientX - tx;
+    if (Math.abs(dx) > 50) go(dx < 0 ? 1 : -1); tx = null; });
+
+  const start = /^#s(\d+)$/.exec(location.hash);
+  cur = 0; slides[0].classList.add('active');
+  show(start ? +start[1] - 1 : 0);
+})();
+</script>
+</body>
+</html>
