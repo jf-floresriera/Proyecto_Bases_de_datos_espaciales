@@ -1,0 +1,6 @@
+
+## 7. Tareas adicionales (presentación y taller)
+
+12. **Datos para el taller**: los datos no están en el repositorio; se generan con `scripts/01_preparar_datos.py`. Genera con anticipación tanto la versión de Overture como la sintética de 2 millones, comprueba el tamaño de `datos/*.parquet` y prepara una forma de compartirlos con la cohorte el día de la sesión (por ejemplo, un enlace de Drive o una memoria USB) por si la red del aula falla. Documenta esa alternativa en la sección "Preparación previa" del taller.
+13. **Imágenes reales con licencia abierta** para `proyectos/tema_01_duckdb_geoparquet/presentacion/index.html`: busca en Wikimedia Commons u otras fuentes con licencia CC0, CC BY o CC BY-SA imágenes que aporten (por ejemplo, una curva de Hilbert, un diagrama de árbol R, una foto aérea de Bogotá). Descárgalas a `presentacion/img/`, insértalas en las diapositivas que correspondan y agrega antes de las referencias una diapositiva "Créditos de imágenes" con título, autor, fuente (URL) y licencia de cada una. No uses imágenes sin licencia clara.
+14. **Resultados en la presentación HTML**: cuando exista `resultados/resumen.csv`, reemplaza la diapositiva "Resultados" del `index.html` con las cifras reales (barras y contadores) y actualiza también el `.qmd` de diapositivas.

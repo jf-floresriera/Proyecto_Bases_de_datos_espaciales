@@ -297,6 +297,17 @@ con.sql("""
 
 El archivo `resultados/densidad_celdas.parquet` se abre directamente en QGIS (arrastrar y soltar) o en GeoLibre (*Add Data → GeoParquet Layer*) sin servidor intermedio [@wu2026geolibre].
 
+## Guía del debate con respuestas orientadoras
+
+| Pregunta | Respuesta orientadora | Cómo comprobarla con los datos propios |
+|:--|:--|:--|
+| ¿La ganancia viene del formato columnar o de eliminar el socket? | De ambos, y se pueden separar. En una consulta que devuelve una sola fila (`count(*)`) casi toda la ventaja proviene del formato columnar, el paralelismo y la ejecución vectorizada; cuando el resultado tiene millones de filas, la transferencia por el socket pesa mucho más [@raasveldt2017hostage]. | Restar `pg_exec_ms` (tiempo dentro del servidor según `EXPLAIN ANALYZE`) de la latencia `t_s` medida en el cliente; descontar en DuckDB la línea base E0. |
+| ¿Es justa la comparación si PostGIS tiene la caché caliente? | Solo si se declara el estado de caché. PostgreSQL conserva páginas en `shared_buffers` entre repeticiones, mientras que cada subproceso DuckDB arranca vacío; ambos aprovechan la caché del sistema operativo. | Medir en frío (reiniciar contenedores antes de la primera ejecución) y en caliente (mediana tras el calentamiento); revisar `shared_read` frente a `shared_hit` y `read_mb` frente a `rchar_mb`. |
+| ¿Qué pasa si los datos se editan a diario? | Parquet es inmutable: modificar un registro implica reescribir el archivo o la partición, y DuckDB admite un solo proceso escritor [@duckdbconcurrency]. La edición se mantiene en PostGIS y se exportan instantáneas periódicas particionadas por fecha o zona. | Cronometrar la reexportación completa con `01_preparar_datos.py` frente a una actualización puntual (`UPDATE`) en PostGIS. |
+| ¿Cómo encaja GeoParquet en una geodatabase corporativa? | Como capa analítica y de distribución, no como reemplazo: dominios, subtipos, reglas de atributos, topología y versionamiento permanecen en la geodatabase; GeoParquet sirve para análisis masivo, tableros y publicación de datos abiertos. | Exportar una capa de la geodatabase con GDAL (`ogr2ogr -f Parquet`) y consultarla con DuckDB sin cargar el servidor de producción. |
+
+: Respuestas orientadoras para el bloque de debate {#tbl-debate-respuestas}
+
 ## Cierre y trabajo autónomo
 
 El benchmark completo (cinco repeticiones por variante) toma más tiempo que la sesión y se ejecuta fuera del aula:

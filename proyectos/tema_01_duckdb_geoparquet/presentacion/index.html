@@ -160,6 +160,11 @@ pre.code{font:500 22px/1.55 var(--mono);background:rgba(0,0,0,.35);border:1px so
 .rg span.hit{box-shadow:0 0 0 3px #fff,0 0 26px 4px rgba(255,210,63,.7)}
 .rg span.skip::after{content:"×";position:absolute;inset:0;display:grid;place-items:center;font:800 30px/1 var(--font);color:#fff;opacity:.7}
 
+.flip{cursor:pointer}
+.flip .ans{display:none}
+.flip.open .q{display:none}
+.flip.open .ans{display:block;animation:rise .5s cubic-bezier(.2,.8,.2,1)}
+.flip.open{border-color:rgba(61,220,132,.5)}
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-delay:0ms!important;transition-duration:.01ms!important}
 }
@@ -742,13 +747,18 @@ pre.code{font:500 22px/1.55 var(--mono);background:rgba(0,0,0,.35);border:1px so
 <section class="slide" data-title="Debate">
   <div class="kicker a">Debate · 15 minutos</div>
   <h2 class="a" style="--d:1">Preguntas para <span class="grad">pensar juntos.</span></h2>
-  <div class="bento mt" style="grid-template-columns:repeat(2,1fr)">
-    <div class="card a" style="--d:2"><div class="mid grad" style="font-size:54px">?</div><h3>¿Ganancia del formato o del socket?</h3></div>
-    <div class="card a" style="--d:3"><div class="mid grad2" style="font-size:54px">?</div><h3>¿Es justa la comparación con caché caliente?</h3></div>
-    <div class="card a" style="--d:4"><div class="mid grad3" style="font-size:54px">?</div><h3>¿Y si los datos se editan a diario?</h3></div>
-    <div class="card a" style="--d:5"><div class="mid grad" style="font-size:54px">?</div><h3>¿Cómo encaja en una geodatabase corporativa?</h3></div>
+  <p class="small a" style="--d:1;margin-top:10px">Toca cada tarjeta para ver la respuesta orientadora.</p>
+  <div class="bento mt2" style="grid-template-columns:repeat(2,1fr)">
+    <div class="card flip a" style="--d:2" tabindex="0"><div class="q"><div class="mid grad" style="font-size:54px">?</div><h3>¿Ganancia del formato o del socket?</h3></div>
+      <div class="ans"><h3 class="dk">De ambos, y se pueden separar.</h3><p>Compara el tiempo de servidor de EXPLAIN ANALYZE con la latencia en el cliente: la diferencia es el socket.</p></div></div>
+    <div class="card flip a" style="--d:3" tabindex="0"><div class="q"><div class="mid grad2" style="font-size:54px">?</div><h3>¿Es justa la comparación con caché caliente?</h3></div>
+      <div class="ans"><h3 class="pg">Solo si se declara el estado de caché.</h3><p>Mide en frío y en caliente; shared hit frente a read muestra cuál fue.</p></div></div>
+    <div class="card flip a" style="--d:4" tabindex="0"><div class="q"><div class="mid grad3" style="font-size:54px">?</div><h3>¿Y si los datos se editan a diario?</h3></div>
+      <div class="ans"><h3 style="color:var(--duck)">Parquet es inmutable: se reescribe.</h3><p>Se edita en PostGIS y se exportan instantáneas por lotes, particionadas por fecha o zona.</p></div></div>
+    <div class="card flip a" style="--d:5" tabindex="0"><div class="q"><div class="mid grad" style="font-size:54px">?</div><h3>¿Cómo encaja en una geodatabase corporativa?</h3></div>
+      <div class="ans"><h3 class="dk">Como capa analítica, no como reemplazo.</h3><p>La geodatabase conserva dominios, reglas y topología; GeoParquet sirve para análisis masivo y datos abiertos.</p></div></div>
   </div>
-  <aside class="notes">Usar E0 y los tiempos de servidor de EXPLAIN ANALYZE para separar el efecto del formato columnar del efecto de eliminar el socket. PostgreSQL mantiene páginas en shared_buffers entre repeticiones; cada subproceso DuckDB arranca vacío pero comparte la caché del sistema operativo. Si los datos se editan constantemente, reescribir Parquet es costoso: PostGIS sigue siendo el sistema de registro.</aside>
+  <aside class="notes">RESPUESTAS ORIENTADORAS. (1) Formato frente a socket: EXPLAIN (ANALYZE) da el tiempo de ejecución dentro del servidor, sin transferir resultados; la latencia medida en el cliente incluye además conexión, socket y serialización. Su diferencia estima el costo del protocolo. En un count(*) el resultado es una sola fila, así que casi toda la ventaja de DuckDB viene del formato columnar, el paralelismo y la ejecución vectorizada; cuando la consulta devuelve millones de filas, el socket pesa mucho más (Raasveldt y Mühleisen, 2017). E0 descuenta el costo de arrancar DuckDB. (2) Caché: PostgreSQL conserva páginas en shared_buffers entre repeticiones y cada subproceso de DuckDB arranca vacío, aunque ambos aprovechan la caché de páginas del sistema operativo. La comparación es justa si se reporta el estado: en frío (reiniciar contenedores antes de medir) y en caliente (mediana después del calentamiento). shared_read alto = lectura de disco; shared_hit alto = caché. (3) Edición diaria: Parquet no se modifica en sitio; cambiar un registro implica reescribir el archivo o la partición. Solución: PostGIS como sistema de registro transaccional y una exportación periódica (ETL nocturno) a GeoParquet particionado; además DuckDB admite un solo proceso escritor. Para versionar lagos de datos existen formatos de tabla como Apache Iceberg. (4) Geodatabase corporativa: dominios, subtipos, reglas de atributos, topología y versionamiento siguen en la geodatabase (Enterprise o PostGIS). GeoParquet entra como formato de intercambio y distribución: tableros analíticos, ciencia de datos, publicación de datos abiertos y consumo con GDAL, QGIS o DuckDB sin cargar el servidor de producción.</aside>
 </section>
 
 <!-- 27 · Cierre -->
@@ -939,6 +949,11 @@ pre.code{font:500 22px/1.55 var(--mono);background:rgba(0,0,0,.35);border:1px so
     card.style.setProperty('--my', `${(e.clientY - r.top) / r.height * 100}%`);
   });
 
+  document.querySelectorAll('.flip').forEach(c => {
+    const t = () => c.classList.toggle('open');
+    c.addEventListener('click', e => { e.stopPropagation(); t(); });
+    c.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); t(); } });
+  });
   /* Navegación */
   const notesBox = document.getElementById('notes'), notesText = document.getElementById('notesText');
   const show = i => {
@@ -949,6 +964,7 @@ pre.code{font:500 22px/1.55 var(--mono);background:rgba(0,0,0,.35);border:1px so
     document.getElementById('count').textContent = `${i + 1} / ${slides.length}`;
     document.getElementById('progress').style.width = `${(i + 1) / slides.length * 100}%`;
     const n = slides[i].querySelector('.notes'); notesText.textContent = n ? n.textContent : '';
+    slides[i].querySelectorAll('.flip.open').forEach(c => c.classList.remove('open'));
     runCounters(slides[i]);
     if (slides[i].contains(rgSorted)) animateRG();
     if (slides[i].querySelector('#rowsGrid')) animateGrids();
